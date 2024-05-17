@@ -70,6 +70,10 @@ struct MeshBlock {
   /// Note(dtingdahl): Required to comply with common block interface. Cuda
   /// stream is not used, MeshBlocks live in CPU memory.
   static Ptr allocateAsync(MemoryType memory_type, const CudaStream&);
+
+  /// Note(dtingdahl): Required to comply with common block interface. does
+  /// nothing.
+  static void initAsync(MeshBlock*, const MemoryType, const CudaStream&) {}
 };
 
 /// Helper struct for mesh blocks on CUDA.

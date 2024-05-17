@@ -28,6 +28,7 @@ limitations under the License.
 #include "nvblox/integrators/projective_occupancy_integrator.h"
 #include "nvblox/integrators/projective_tsdf_integrator.h"
 #include "nvblox/integrators/tsdf_decay_integrator.h"
+#include "nvblox/map/blocks_to_update_tracker.h"
 #include "nvblox/map/blox.h"
 #include "nvblox/map/common_names.h"
 #include "nvblox/map/layer.h"
@@ -43,37 +44,39 @@ limitations under the License.
 
 namespace nvblox {
 
-// Which type of mapping to do.
-enum class ProjectiveLayerType { kTsdf, kOccupancy, kNone };
-inline std::string toString(ProjectiveLayerType layer_type) {
-  switch (layer_type) {
-    case ProjectiveLayerType::kTsdf:
-      return "kTsdf";
-      break;
-    case ProjectiveLayerType::kOccupancy:
-      return "kOccupancy";
-      break;
-    case ProjectiveLayerType::kNone:
-      return "kNone";
-      break;
-    default:
-      LOG(FATAL) << "Not implemented";
-      break;
-  }
-  return "";
-}
-
 /// The ESDF mode. Enum indicates if an Mapper is configured for 3D or 2D
 /// Esdf production, or that this has not yet been determined (kUnset).
 enum class EsdfMode { k3D, k2D, kUnset };
-std::string toString(EsdfMode esdf_mode);
+
+template <>
+inline std::string toString(const EsdfMode& esdf_mode) {
+  switch (esdf_mode) {
+    case EsdfMode::k3D:
+      return "k3D";
+      break;
+    case EsdfMode::k2D:
+      return "k2D";
+      break;
+    case EsdfMode::kUnset:
+      return "kUnset";
+      break;
+    default:
+      LOG(FATAL) << "Not implemented";
+      return "";
+      break;
+  }
+}
+
+/// Whether to update the full layer on calls to updateMesh(),
+/// updateFreespace() and updateEsdf() respectively or only the blocks that
+/// require and update (tracked by BlocksToUpdateTracker).
+enum class UpdateFullLayer { kNo, kYes };
 
 /// The mapper classes wraps layers and integrators together.
 /// In the base class we only specify that a mapper should contain map layers
 /// and leave it up to sub-classes to add functionality.
 class MapperBase {
  public:
-  static constexpr bool kDefaultIgnoreEsdfSitesInFreespace = false;
   static constexpr ProjectiveLayerType kDefaultProjectiveLayerType =
       ProjectiveLayerType::kTsdf;
 
@@ -157,102 +160,69 @@ class Mapper : public MapperBase {
   /// Decay the TSDF layer (reduce weights)
   void decayTsdf();
 
-  /// Decay the TSDF layer (reduce weights)
-  /// @param block_to_exclude   Blocks to exclude when decaying
-  /// @param exclusion_center   Center of radial exclusion of blocks
-  /// @param exclusion_radius_m Radius of the radial exclusion
-  void decayTsdf(const std::vector<Index3D>& block_to_exclude,
-                 const std::optional<Vector3f>& exclusion_center,
-                 const std::optional<float>& exclusion_radius_m);
-
   /// Decay the full occupancy layer.
   void decayOccupancy();
 
-  /// Decay the occupancy layer (approach 0.5 occupancy probability).
-  /// @param block_to_exclude  Blocks to exclude when decaying
-  /// @param camera_center     Center of radial exclusion of blocks
-  /// @param exclusion_radius_m Radius of the radial exclusion
-  void decayOccupancy(std::vector<Index3D> const& blocks_to_exclude,
-                      const std::optional<Vector3f>& exclusion_center,
-                      const std::optional<float>& exclusion_radius_m);
+  /// Updates the freespace blocks.
+  /// @param update_time_ms The time of the update in miliseconds.
+  /// @param update_full_layer Whether to update the full layer or only the
+  /// blocks that require and update.
+  void updateFreespace(Time update_time_ms, UpdateFullLayer update_full_layer =
+                                                UpdateFullLayer::kNo);
 
-  /// Updates the freespace blocks which require an update
-  /// @param The time of the update in miliseconds.
-  /// @return The indices of the blocks that were updated in this call.
-  std::vector<Index3D> updateFreespace(Time update_time_ms);
+  /// Updates the mesh blocks.
+  /// @param update_full_layer Whether to update the full layer or only the
+  /// blocks that require and update. Useful if loading a layer cake without a
+  /// mesh layer, for example.
+  /// @param maybe_T_L_C Pose of the camera, specified as a transform from
+  ///                    Camera-frame to Layer-frame transform. If given,
+  ///                    returned mesh blocks will be limited to the ones
+  ///                    surrounding the camera position.
+  /// @return A serialized mesh. If mesh_bandwidth_limit_mbps is positive,
+  ///         the size of the mesh is limited based on estimated bandwidth
+  ///         capacity.
+  std::shared_ptr<const SerializedMesh> updateMesh(
+      UpdateFullLayer update_full_layer = UpdateFullLayer::kNo,
+      const std::optional<Transform>& maybe_T_L_C = std::nullopt,
+      bool serialize_full_mesh = false);
 
-  /// Updates the mesh blocks which require an update
-  /// @return The indices of the blocks that were updated in this call.
-  std::vector<Index3D> updateMesh();
-
-  /// Generate (or re-generate) a mesh for the entire map. Useful if loading
-  /// a layer cake without a mesh layer, for example.
-  void updateFullMesh();
-
-  /// Updates the ESDF blocks which require an update.
+  /// Updates the ESDF blocks.
   /// Note that currently we limit the Mapper class to calculating *either*
   /// the 2D or 3D ESDF, not both. Which is to be calculated is determined by
   /// the first call to updateEsdf().
+  /// @param update_full_layer Whether to update the full layer or only the
+  /// blocks that require and update.
   ///@return std::vector<Index3D> The indices of the blocks that were updated
   ///        in this call.
-  std::vector<Index3D> updateEsdf();
+  void updateEsdf(UpdateFullLayer update_full_layer = UpdateFullLayer::kNo);
 
-  /// Generate an ESDF on *all* allocated blocks. Will replace whatever has
-  /// been done before.
-  void updateFullEsdf();
-
-  /// Updates the ESDF blocks which require an update.
+  /// Updates the ESDF blocks.
   /// Note that currently we limit the Mapper class to calculating *either*
   /// the 2D or 3D ESDF, not both. Which is to be calculated is determined by
   /// the first call to updateEsdf(). This function operates by collapsing a
   /// finite thickness slice of the 3D TSDF into a binary obstacle map, and
-  /// then generating the 2D ESDF. The input parameters define the limits of
+  /// then generating the 2D ESDF. The mapper parameters define the limits of
   /// the 3D slice that are considered. Note that the resultant 2D ESDF is
   /// stored in a single voxel thick layer in ESDF layer.
+  /// @param update_full_layer Whether to update the full layer or only the
+  /// blocks that require and update.
   /// @return The indices of the blocks that were updated in this call.
-  ///@param slice_input_z_min The minimum height of the 3D TSDF slice used to
-  ///                         generate the 2D binary obstacle map.
-  ///@param slice_input_z_max The minimum height of the 3D TSDF slice used to
-  ///                         generate the 2D binary obstacle map.
-  ///@param slice_output_z The height at which the 2D ESDF is stored.
   ///@return std::vector<Index3D>  The indices of the blocks that were updated
   ///        in this call.
-  std::vector<Index3D> updateEsdfSlice(float slice_input_z_min,
-                                       float slice_input_z_max,
-                                       float slice_output_z);
+  void updateEsdfSlice(
+      UpdateFullLayer update_full_layer = UpdateFullLayer::kNo);
 
   /// Clears the reconstruction outside a radius around a center point,
   /// deallocating the memory.
   ///@param center The center of the keep-sphere.
   ///@param radius The radius of the keep-sphere.
-  ///@return std::vector<Index3D> The block indices removed.
-  std::vector<Index3D> clearOutsideRadius(const Vector3f& center, float radius);
+  void clearOutsideRadius(const Vector3f& center, float radius);
 
   /// Allocates blocks touched by radius and gives their voxels some small
   /// positive weight.
   /// @param center The center of allocation-sphere
   /// @param radius The radius of allocation-sphere
   void markUnobservedTsdfFreeInsideRadius(const Vector3f& center, float radius);
-
-  /// Return N bytes of MeshBlocks from the stream queue.
-  /// @param num_bytes The number of bytes of mesh blocks to stream
-  /// @param exclusion_center_m Optional center of radius-based exclusion.
-  /// This parameter is required if radius-based exclusion is requested.
-  /// @return The list of mesh block indices to stream
-  std::vector<Index3D> getNBytesOfMeshBlocksFromStreamQueue(
-      const size_t num_bytes,
-      const std::optional<Vector3f>& exclusion_center_m = std::nullopt);
-
-  /// Return N bytes of serialized MeshBlocks from the stream queue.
-  /// @param num_bytes The number of bytes of mesh blocks to stream
-  /// @param exclusion_center_m Optional center of radius-based exclusion.
-  /// This parameter is required if radius-based exclusion is requested.
-  /// @param cuda_stream Cuda stream.
-  /// @param Serialized mesh containing highest priority mesh blocks
-  const std::shared_ptr<const SerializedMesh>
-  getNBytesOfSerializedMeshBlocksFromStreamQueue(
-      const size_t num_bytes, const std::optional<Vector3f>& exclusion_center_m,
-      CudaStream cuda_stream);
 
   /// Gets the preprocessed version of the last depth image passed to
   /// integrateDepth(). Note that we return a shared_ptr to a buffered depth
@@ -342,8 +312,7 @@ class Mapper : public MapperBase {
   }
   /// Getter
   ///@return const ProjectiveOccupancyIntegrator& occupancy integrator used
-  /// for
-  ///        3D LiDAR scan integration.
+  /// for 3D LiDAR scan integration.
   const ProjectiveOccupancyIntegrator& lidar_occupancy_integrator() const {
     return lidar_occupancy_integrator_;
   }
@@ -409,7 +378,8 @@ class Mapper : public MapperBase {
     return occupancy_decay_integrator_;
   }
   /// Getter
-  ///@return TsdfDecayIntegrator& TSDF decay integrator used for decaying a TSDF
+  ///@return TsdfDecayIntegrator& TSDF decay integrator used for decaying a
+  /// TSDF
   ///        layer (through reduction of voxel weights).
   TsdfDecayIntegrator& tsdf_decay_integrator() {
     return tsdf_decay_integrator_;
@@ -430,35 +400,10 @@ class Mapper : public MapperBase {
   /// @return The voxel size in meters
   float voxel_size_m() const { return voxel_size_m_; };
   /// Getter
-  /// @return The type of projectivelayer we're mapping
+  /// @return The type of projective layer we're mapping
   ProjectiveLayerType projective_layer_type() const {
     return projective_layer_type_;
   };
-
-  /// Getter: see description of ignore_esdf_sites_in_freespace_
-  /// @return value Boolean whether to ignore esdf sites in freespace
-  bool ignore_esdf_sites_in_freespace() const {
-    return ignore_esdf_sites_in_freespace_;
-  };
-  /// Setter: see description of ignore_esdf_sites_in_freespace_
-  /// @param value Boolean whether to ignore esdf sites in freespace
-  void ignore_esdf_sites_in_freespace(bool value) {
-    ignore_esdf_sites_in_freespace_ = value;
-  };
-
-  /// Getter
-  /// @return Whether we should build a MeshBlock stream queue such that N
-  /// bytes of mesh can be requested through
-  /// getNBytesOfMeshBlocksFromStreamQueue().
-  bool maintain_mesh_block_stream_queue() const {
-    return maintain_mesh_block_stream_queue_;
-  }
-  /// Setter
-  /// @param Whether we should build a MeshBlock stream queue.
-  void maintain_mesh_block_stream_queue(
-      const bool maintain_mesh_block_stream_queue) {
-    maintain_mesh_block_stream_queue_ = maintain_mesh_block_stream_queue;
-  }
 
   /// Getter
   /// @return Whether we should perform preprocessing on input DepthImages
@@ -483,16 +428,62 @@ class Mapper : public MapperBase {
     depth_preprocessing_num_dilations_ = depth_preprocessing_num_dilations;
   }
 
-  /// Getter for TSDF decay factor.
-  /// @return decay factor
-  int tsdf_decay_factor() const {
-    return tsdf_decay_integrator_.decay_factor();
+  /// Getter for mesh_bandwidth_limit_mbps that limits the mesh size returned by
+  /// updateMesh
+  /// @return mesh_bandwidth_limit_mbps
+  float mesh_bandwidth_limit_mbps() const { return mesh_bandwidth_limit_mbps_; }
+  /// Setter for mesh_bandwidth_limit_mbps that limits the mesh size returned by
+  /// updateMesh. Set to negative number for unlimited size.
+  /// @param mesh_bandwidth_limit_mbps
+  void mesh_bandwidth_limit_mbps(const float mesh_bandwidth_limit_mbps) {
+    mesh_bandwidth_limit_mbps_ = mesh_bandwidth_limit_mbps;
   }
-  /// Setter for TSDF decay factor
-  /// @param tsdf_factor decay factor.
-  /// @pre 0.0 < param < 1.0
-  void tsdf_decay_factor(const float tsdf_decay_factor) {
-    tsdf_decay_integrator_.decay_factor(tsdf_decay_factor);
+
+  /// A parameter getter
+  /// The minimum height, in meters, to consider obstacles part of the 2D ESDF
+  /// slice.
+  /// @returns esdf_slice_min_height
+  float esdf_slice_min_height() const { return esdf_slice_min_height_; }
+  /// A parameter setter
+  /// See esdf_slice_min_height().
+  /// @param esdf_slice_min_height
+  void esdf_slice_min_height(const float esdf_slice_min_height) {
+    esdf_slice_min_height_ = esdf_slice_min_height;
+  }
+  /// A parameter getter
+  /// The maximum height, in meters, to consider obstacles part of the 2D ESDF
+  /// slice.
+  /// @returns esdf_slice_max_height
+  float esdf_slice_max_height() const { return esdf_slice_max_height_; }
+  /// A parameter setter
+  /// See esdf_slice_max_height().
+  /// @param esdf_slice_max_height
+  void esdf_slice_max_height(const float esdf_slice_max_height) {
+    esdf_slice_max_height_ = esdf_slice_max_height;
+  }
+  /// A parameter getter
+  /// The output slice height for the distance slice and ESDF pointcloud. Does
+  /// not need to be within min and max height below. In units of meters.
+  /// @returns esdf_slice_height
+  float esdf_slice_height() const { return esdf_slice_height_; }
+  /// A parameter setter
+  /// See esdf_slice_height().
+  /// @param esdf_slice_height
+  void esdf_slice_height(const float esdf_slice_height) {
+    esdf_slice_height_ = esdf_slice_height;
+  }
+
+  /// A parameter getter
+  /// Whether to exclude voxel contained observed in the the last depth frame
+  /// passed to integrateDepth from the voxels which are decayed.
+  bool exclude_last_view_from_decay() const {
+    return exclude_last_view_from_decay_;
+  }
+  /// A parameter setter
+  /// See exclude_last_view_from_decay()
+  /// @param exclude_last_view_from_decay
+  void exclude_last_view_from_decay(const bool exclude_last_view_from_decay) {
+    exclude_last_view_from_decay_ = exclude_last_view_from_decay;
   }
 
   /// Saving and loading functions.
@@ -541,9 +532,37 @@ class Mapper : public MapperBase {
   /// @return the parameter tree string
   virtual std::string getParametersAsString() const;
 
+  /// @brief Get the mesh blocks that have been cleared in the mesh layer since
+  /// the last call of the function. This information is needed to remove them
+  /// from the visualizer.
+  /// @param blocks_to_ignore Blocks that should not part of the returned
+  /// vector.
+  /// @return Vector of cleared mesh block indices.
+  std::vector<Index3D> getClearedMeshBlocks(
+      const std::vector<Index3D>& blocks_to_ignore);
+
  protected:
   /// Perform preprocessing on a depth image
   const DepthImage& preprocessDepthImageAsync(const DepthImage& depth_image);
+
+  /// Return a serialized mesh from the mesh streamer.
+  std::shared_ptr<const SerializedMesh> createSerializedMesh(
+      const std::vector<Index3D>& mesh_blocks_to_stream,
+      const std::optional<Transform>& maybe_T_L_C = std::nullopt);
+
+  /// @brief Get the esdf, mesh or freespace blocks that need and update.
+  /// @param blocks_to_update_type The type of blocks you want to get the vector
+  /// for.
+  /// @param update_full_layer Whether to return all block indices (for updating
+  /// the full layer) or only the blocks that need an update.
+  /// @return Vector of block indices to update.
+  std::vector<Index3D> getBlocksToUpdate(
+      BlocksToUpdateType blocks_to_update_type,
+      UpdateFullLayer update_full_layer) const;
+
+  /// @brief Deallocate blocks int the esdf, mesh and freespace layer.
+  /// @param blocks_to_clear Vector of blocks to clear.
+  void clearBlocksInLayers(const std::vector<Index3D>& blocks_to_clear);
 
   /// The CUDA stream that mapper work is processed on
   std::shared_ptr<CudaStream> cuda_stream_;
@@ -574,36 +593,41 @@ class Mapper : public MapperBase {
   MeshIntegrator mesh_integrator_;
   EsdfIntegrator esdf_integrator_;
 
+  /// Esdf 2D slice parameters
+  float esdf_slice_min_height_ = kEsdfSliceMinHeightParamDesc.default_value;
+  float esdf_slice_max_height_ = kEsdfSliceMaxHeightParamDesc.default_value;
+  float esdf_slice_height_ = kEsdfSliceHeightParamDesc.default_value;
+
   /// Preprocessing depth maps prior to integration.
   /// Currently, the only preprocessing step is to dilate the invalid regions
   /// of the input depth image. We have found this useful to reduce the
   /// depth-bleeding effects on the intel realsense.
-  bool do_depth_preprocessing_ = mapper::kDefaultDoDepthPreprocessing;
+  bool do_depth_preprocessing_ = kDoDepthPrepocessingParamDesc.default_value;
   int depth_preprocessing_num_dilations_ =
-      mapper::kDefaultDepthPreprocessingNumDilations;
+      kDepthPreprocessingNumDilationsParamDesc.default_value;
   DepthPreprocessor depth_preprocessor_;
   std::shared_ptr<DepthImage> preprocessed_depth_image_ =
       std::make_shared<DepthImage>(MemoryType::kDevice);
 
-  /// These collections keep track of the blocks which need to be updated on
-  /// the next calls to updateMesh(), updateFreespace() upd updateEsdf()
-  /// respectively. They are updated when new frames are integrated into the
-  /// reconstruction by calls to integrateDepth() and integrateLidarDepth().
-  Index3DSet mesh_blocks_to_update_;
-  Index3DSet freespace_blocks_to_update_;
-  Index3DSet esdf_blocks_to_update_;
+  /// Helper to keep track of which blocks need to be updated on the next calls
+  /// to updateMesh(), updateFreespace() upd updateEsdf() respectively.
+  BlocksToUpdateTracker blocks_to_update_tracker_;
 
-  /// This object manages a queue of mesh blocks to be streamed when bandwidth
-  /// limiting is desired. Set maintain_mesh_block_stream_queue_ to true to
-  /// build the queue during mapping.
-  bool maintain_mesh_block_stream_queue_ =
-      mapper::kDefaultMaintainMeshBlockStreamQueue;
+  /// Keeping track of the mesh blocks that got deleted in the mesh layer.
+  Index3DSet cleared_mesh_blocks_;
+
+  /// This object handles the bandwidth limiting of the mesh streamer.
   MeshStreamerOldestBlocks mesh_streamer_;
+  float mesh_bandwidth_limit_mbps_ =
+      kMeshBandwidthLimitMbpsParamDesc.default_value;
 
-  /// Whether to ignore esdf sites that fall into freespace.
-  /// When this flag is set, the freespace layer is passed to the esdf
-  /// integrator for checking if candidate esdf sites fall into freespace.
-  bool ignore_esdf_sites_in_freespace_ = kDefaultIgnoreEsdfSitesInFreespace;
+  /// Whether to exclude the last depth frustum from the decay
+  bool exclude_last_view_from_decay_ =
+      kExcludeLastViewFromDecayParamDesc.default_value;
+  /// Last known depth viewpoint for view-based decay exclusion
+  std::optional<DepthImage> last_depth_image_;
+  std::optional<Camera> last_depth_camera_;
+  std::optional<Transform> last_depth_T_L_C_;
 };
 
 }  // namespace nvblox

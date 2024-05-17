@@ -66,6 +66,12 @@ GPULayerView<BlockType>& GPULayerView<BlockType>::operator=(
 
 template <typename BlockType>
 void GPULayerView<BlockType>::reset(LayerType* layer_ptr) {
+  reset(layer_ptr, CudaStreamOwning());
+}
+
+template <typename BlockType>
+void GPULayerView<BlockType>::reset(LayerType* layer_ptr,
+                                    const CudaStream& cuda_stream) {
   CHECK_NOTNULL(layer_ptr);
   timing::Timer timer("gpu_hash/transfer");
 
@@ -94,6 +100,8 @@ void GPULayerView<BlockType>::reset(LayerType* layer_ptr) {
 
   // This is necessary for bug-free operation, as clear does not sync
   // afterwards.
+  // TODO(dtingdahl) Use newer version of stdgpu that support cuda streams to
+  // avoid device sync
   checkCudaErrors(cudaDeviceSynchronize());
   checkCudaErrors(cudaPeekAtLastError());
   if (gpu_hash_ptr_->impl_.full()) {
@@ -103,7 +111,7 @@ void GPULayerView<BlockType>::reset(LayerType* layer_ptr) {
   block_size_ = layer_ptr->block_size();
 
   // Arange blocks in continuous host memory for transfer
-  thrust::host_vector<IndexBlockPair<BlockType>> host_block_vector;
+  host_vector<IndexBlockPair<BlockType>> host_block_vector;
   host_block_vector.reserve(layer_ptr->numAllocatedBlocks());
   for (const auto& index : layer_ptr->getAllBlockIndices()) {
     host_block_vector.push_back(IndexBlockPair<BlockType>(
@@ -111,20 +119,16 @@ void GPULayerView<BlockType>::reset(LayerType* layer_ptr) {
   }
 
   // CPU -> GPU
-  thrust::device_vector<IndexBlockPair<BlockType>> device_block_vector(
-      host_block_vector);
+  scratch_block_vector_device_.copyFromAsync(host_block_vector, cuda_stream);
+  cuda_stream.synchronize();
 
-  // GPU Insert
-  // NOTE(alexmillane): We have to do some unfortunate casting here. The problem
-  // is that the hash stores pairs with const keys, but the IndexBlockPair
-  // vector CANNOT have const keys. So the only way is to perform this cast.
-  ConstIndexBlockPair<BlockType>* block_start_raw_ptr =
-      reinterpret_cast<ConstIndexBlockPair<BlockType>*>(
-          device_block_vector.data().get());
   gpu_hash_ptr_->impl_.insert(
-      stdgpu::make_device(block_start_raw_ptr),
-      stdgpu::make_device(block_start_raw_ptr + device_block_vector.size()));
+      stdgpu::make_device(scratch_block_vector_device_.data()),
+      stdgpu::make_device(scratch_block_vector_device_.data() +
+                          scratch_block_vector_device_.size()));
 
+  // TODO(dtingdahl) Use newer version of stdgpu that support cuda streams to
+  // avoid device sync
   checkCudaErrors(cudaDeviceSynchronize());
   checkCudaErrors(cudaPeekAtLastError());
 }

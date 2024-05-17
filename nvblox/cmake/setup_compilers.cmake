@@ -2,12 +2,11 @@
 # Handle user options
 # ##############################################################################
 
-# GPU architectures By default this flag is NOT set. Cmake then detects the
-# architecture of the build computer and compiles for that architecture only.
-# This can be an issue if you're building on one machine, and running on
-# machines with a different GPU achitecture. In this case, set the flag. The
-# penalty for doing this is increased build times.
-option(BUILD_FOR_ALL_ARCHS "Build for all GPU architectures" OFF)
+# If GPU architectures are not explicitly set, cmake will detect the architecture of the build
+# computer and compiles for that architecture only. This can be overridden by setting the
+# CMAKE_CUDA_ARCHITECTURES variable to a semicolon-separated list of architectures to support, example
+# cmake .. '-DCMAKE_CUDA_ARCHITECTURES=75;72'
+include("${CMAKE_CURRENT_LIST_DIR}/cuda/setup_compute_capability.cmake")
 
 # This option avoids any implementations using std::string in their signature in
 # header files Useful for Nvblox PyTorch wrapper, which requires the old
@@ -93,25 +92,6 @@ add_compile_options(
 add_compile_options(
   "$<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CONFIG:Release>>:${CXX_FLAGS_RELEASE}>")
 
-# ##############################################################################
-# Setup cuda compiler flags
-# ##############################################################################
-
-# Only used if the BUILD_FOR_ALL_ARCHS flag above is true.
-if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.18)
-  set(CUDA_ARCHITECTURE_FLAGS "87;86;80;75;72;70;61;60")
-else()
-  set(CUDA_ARCHITECTURE_FLAGS
-      " -gencode=arch=compute_87,code=sm_87 \
-        -gencode=arch=compute_86,code=sm_86 \
-        -gencode=arch=compute_80,code=sm_80 \
-        -gencode=arch=compute_75,code=sm_75 \
-        -gencode=arch=compute_72,code=sm_72 \
-        -gencode=arch=compute_70,code=sm_70 \
-        -gencode=arch=compute_61,code=sm_61 \
-        -gencode=arch=compute_60,code=sm_60")
-endif()
-
 # When nvcc passes args to the native c++ compiler, it requires a comma
 # separated list.
 string(REPLACE ";" "," CXX_FLAGS_COMMON_COMMA_SEPARATED "${CXX_FLAGS_COMMON}")
@@ -136,10 +116,15 @@ set(CUDA_FLAGS_COMMON
     "--diag-suppress=20091"
   )
 
-set(CUDA_FLAGS_DEBUG "${CUDA_FLAGS_COMMON}" "--debug" "--device-debug" "-O0")
-set(CUDA_FLAGS_RELWITHDEBINFO "${CUDA_FLAGS_COMMON}" "-O2"
-                              "--debug" "--generate-line-info")
-set(CUDA_FLAGS_RELEASE "${CUDA_FLAGS_COMMON}" "-O3" "-DNDEBUG")
+set(CUDA_FLAGS_DEBUG "--debug" "--device-debug" "-O0")
+set(CUDA_FLAGS_RELWITHDEBINFO "-O2" "--debug" "--generate-line-info")
+set(CUDA_FLAGS_RELEASE "-O3" "-DNDEBUG")
+
+# Flags added for all builds
+add_compile_options(
+  "$<$<COMPILE_LANGUAGE:CUDA>:${CUDA_FLAGS_COMMON}>")
+
+# Flags appended for special build types
 add_compile_options(
   "$<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<BOOL:${WARNING_AS_ERROR}>>:-Xcompiler=-Werror>")
 add_compile_options(

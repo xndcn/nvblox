@@ -30,8 +30,9 @@ limitations under the License.
 
 namespace nvblox {
 
-void weldVerticesThrust(const std::vector<Index3D>& block_indices,
-                        BlockLayer<MeshBlock>* mesh_layer) {
+void weldVerticesThrustAsync(const std::vector<Index3D>& block_indices,
+                             BlockLayer<MeshBlock>* mesh_layer,
+                             const CudaStream& cuda_stream) {
   for (const Index3D& index : block_indices) {
     MeshBlock::Ptr mesh_block = mesh_layer->getBlockAtIndex(index);
 
@@ -46,12 +47,13 @@ void weldVerticesThrust(const std::vector<Index3D>& block_indices,
     input_normals.copyFrom(mesh_block->normals);
 
     // sort vertices to bring duplicates together
-    thrust::sort(thrust::device, mesh_block->vertices.begin(),
+    thrust::sort(thrust::device.on(cuda_stream), mesh_block->vertices.begin(),
                  mesh_block->vertices.end(), VectorCompare<Vector3f>());
 
     // Find unique vertices and erase redundancies. The iterator will point to
     // the new last index.
-    auto iterator = thrust::unique(thrust::device, mesh_block->vertices.begin(),
+    auto iterator = thrust::unique(thrust::device.on(cuda_stream),
+                                   mesh_block->vertices.begin(),
                                    mesh_block->vertices.end());
 
     // Figure out the new size.
@@ -60,44 +62,49 @@ void weldVerticesThrust(const std::vector<Index3D>& block_indices,
     mesh_block->normals.resize(new_size);
 
     // Find the indices of the original triangles.
-    thrust::lower_bound(thrust::device, mesh_block->vertices.begin(),
+    thrust::lower_bound(thrust::device.on(cuda_stream),
+                        mesh_block->vertices.begin(),
                         mesh_block->vertices.end(), input_vertices.begin(),
                         input_vertices.end(), mesh_block->triangles.begin(),
                         VectorCompare<Vector3f>());
 
     // Reshuffle the normals to match.
-    thrust::scatter(thrust::device, input_normals.begin(), input_normals.end(),
-                    mesh_block->triangles.begin(), mesh_block->normals.begin());
+    thrust::scatter(thrust::device.on(cuda_stream), input_normals.begin(),
+                    input_normals.end(), mesh_block->triangles.begin(),
+                    mesh_block->normals.begin());
   }
 }
 
-void sortSingleBlockThrust(device_vector<Vector3f>* vertices) {
-  thrust::sort(thrust::device, vertices->begin(), vertices->end(),
-               VectorCompare<Vector3f>());
+void sortSingleBlockThrustAsync(device_vector<Vector3f>* vertices,
+                                const CudaStream& cuda_stream) {
+  thrust::sort(thrust::device.on(cuda_stream), vertices->begin(),
+               vertices->end(), VectorCompare<Vector3f>());
 }
 
-void weldSingleBlockThrust(device_vector<Vector3f>* input_vertices,
-                           device_vector<int>* input_indices,
-                           device_vector<Vector3f>* output_vertices,
-                           device_vector<int>* output_indices) {
+void weldSingleBlockThrustAsync(device_vector<Vector3f>* input_vertices,
+                                device_vector<int>* input_indices,
+                                device_vector<Vector3f>* output_vertices,
+                                device_vector<int>* output_indices,
+                                const CudaStream& cuda_stream) {
   output_vertices->copyFrom(*input_vertices);
   output_indices->copyFrom(*input_indices);
 
   // sort vertices to bring duplicates together
-  thrust::sort(thrust::device, output_vertices->begin(), output_vertices->end(),
-               VectorCompare<Vector3f>());
+  thrust::sort(thrust::device.on(cuda_stream), output_vertices->begin(),
+               output_vertices->end(), VectorCompare<Vector3f>());
 
   // Find unique vertices and erase redundancies. The iterator will point to
   // the new last index.
-  auto iterator = thrust::unique(thrust::device, output_vertices->begin(),
-                                 output_vertices->end());
+  auto iterator =
+      thrust::unique(thrust::device.on(cuda_stream), output_vertices->begin(),
+                     output_vertices->end());
 
   // Figure out the new size.
   size_t new_size = iterator - output_vertices->begin();
   output_vertices->resize(new_size);
 
   // Find the indices of the original triangles.
-  thrust::lower_bound(thrust::device, output_vertices->begin(),
+  thrust::lower_bound(thrust::device.on(cuda_stream), output_vertices->begin(),
                       output_vertices->end(), input_vertices->begin(),
                       input_vertices->end(), output_indices->begin(),
                       VectorCompare<Vector3f>());
@@ -149,16 +156,19 @@ __global__ void blockSortKernel(int num_vals, Vector3f* d_in, Vector3f* d_out) {
 }
 
 /// ʕ•ᴥ•ʔ
-void sortSingleBlockCub(device_vector<Vector3f>* input_vertices,
-                        device_vector<Vector3f>* output_vertices) {
+void sortSingleBlockCubAsync(device_vector<Vector3f>* input_vertices,
+                             device_vector<Vector3f>* output_vertices,
+                             const CudaStream& cuda_stream) {
   // Together this should be >> the max number of vertices in the mesh.
   constexpr int kNumThreads = 128;
   constexpr int kNumItemsPerThread = 16;
   if (input_vertices->size() >= kNumThreads * kNumItemsPerThread) {
     LOG(ERROR) << "Input vertices vector too long!";
   }
-  blockSortKernel<kNumThreads, kNumItemsPerThread><<<1, kNumThreads>>>(
-      input_vertices->size(), input_vertices->data(), output_vertices->data());
+  blockSortKernel<kNumThreads, kNumItemsPerThread>
+      <<<1, kNumThreads, 0, cuda_stream>>>(input_vertices->size(),
+                                           input_vertices->data(),
+                                           output_vertices->data());
 }
 
 // Block-sorting CUDA kernel
@@ -223,8 +233,9 @@ __global__ void blockUniqueKernel(int num_vals, Vector3f* d_in, int* num_out,
 }
 
 /// ʕ•ᴥ•ʔ
-void uniqueSingleBlockCub(device_vector<Vector3f>* input_vertices,
-                          device_vector<Vector3f>* output_vertices) {
+void uniqueSingleBlockCubAsync(device_vector<Vector3f>* input_vertices,
+                               device_vector<Vector3f>* output_vertices,
+                               const CudaStream& cuda_stream) {
   // Together this should be >> the max number of vertices in the mesh.
   constexpr int kNumThreads = 128;
   constexpr int kNumItemsPerThread = 16;
@@ -234,9 +245,11 @@ void uniqueSingleBlockCub(device_vector<Vector3f>* input_vertices,
 
   unified_ptr<int> num_out = make_unified<int>(MemoryType::kDevice);
   blockUniqueKernel<kNumThreads, kNumItemsPerThread>
-      <<<1, kNumThreads>>>(input_vertices->size(), input_vertices->data(),
-                           num_out.get(), output_vertices->data());
+      <<<1, kNumThreads, 0, cuda_stream>>>(
+          input_vertices->size(), input_vertices->data(), num_out.get(),
+          output_vertices->data());
 
+  cuda_stream.synchronize();
   unified_ptr<int> num_out_host = num_out.clone(MemoryType::kHost);
   output_vertices->resize(*num_out_host);
 }
@@ -329,10 +342,11 @@ __global__ void combinedSingleBlockKernel(int num_vals, Vector3f* d_in,
 }
 
 /// ʕ•ᴥ•ʔʕ•ᴥ•ʔʕ•ᴥ•ʔʕ•ᴥ•ʔʕ•ᴥ•ʔ
-void combinedSingleBlockCub(device_vector<Vector3f>* input_vertices,
-                            device_vector<int>* input_indices,
-                            device_vector<Vector3f>* output_vertices,
-                            device_vector<int>* output_indices) {
+void combinedSingleBlockCubAsync(device_vector<Vector3f>* input_vertices,
+                                 device_vector<int>* input_indices,
+                                 device_vector<Vector3f>* output_vertices,
+                                 device_vector<int>* output_indices,
+                                 const CudaStream& cuda_stream) {
   // Together this should be >> the max number of vertices in the mesh.
   constexpr int kNumThreads = 128;
   constexpr int kNumItemsPerThread = 16;
@@ -342,9 +356,9 @@ void combinedSingleBlockCub(device_vector<Vector3f>* input_vertices,
 
   unified_ptr<int> num_out = make_unified<int>(MemoryType::kDevice);
   combinedSingleBlockKernel<kNumThreads, kNumItemsPerThread>
-      <<<1, kNumThreads>>>(input_vertices->size(), input_vertices->data(),
-                           input_indices->data(), num_out.get(),
-                           output_vertices->data(), output_indices->data());
+      <<<1, kNumThreads, 0, cuda_stream>>>(
+          input_vertices->size(), input_vertices->data(), input_indices->data(),
+          num_out.get(), output_vertices->data(), output_indices->data());
 
   unified_ptr<int> num_out_host = num_out.clone(MemoryType::kHost);
   output_vertices->resize(*num_out_host);

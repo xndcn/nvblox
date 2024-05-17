@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "nvblox/core/parameter_tree.h"
 #include "nvblox/integrators/internal/projective_integrator.h"
+#include "nvblox/integrators/projective_integrator_params.h"
 #include "nvblox/integrators/weighting_function.h"
 
 namespace nvblox {
@@ -136,11 +137,11 @@ class ProjectiveTsdfIntegrator : public ProjectiveIntegrator<TsdfVoxel> {
   unified_ptr<UpdateTsdfVoxelFunctor> update_functor_host_ptr_;
 
   // The maximum weight that a TsdfVoxel can accumulate.
-  float max_weight_ = kDefaultMaxWeight;
+  float max_weight_ = kProjectiveIntegratorMaxWeightParamDesc.default_value;
 
   // The type of the weighting function to be applied to observations
   WeightingFunctionType weighting_function_type_ =
-      kDefaultWeightingFunctionType;
+      kProjectiveIntegratorWeightingModeParamDesc.default_value;
 
   // The distance given to unobserved voxels when
   // markUnobservedFreeInsideRadius() is called. Note that a negative value

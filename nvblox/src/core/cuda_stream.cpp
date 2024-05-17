@@ -26,8 +26,9 @@ void CudaStream::synchronize() const {
   checkCudaErrors(cudaStreamSynchronize(*stream_ptr_));
 }
 
-CudaStreamOwning::CudaStreamOwning() : CudaStream(&stream_) {
-  checkCudaErrors(cudaStreamCreate(&stream_));
+CudaStreamOwning::CudaStreamOwning(const unsigned int flags)
+    : CudaStream(&stream_) {
+  checkCudaErrors(cudaStreamCreateWithFlags(&stream_, flags));
 }
 
 CudaStreamOwning::~CudaStreamOwning() {

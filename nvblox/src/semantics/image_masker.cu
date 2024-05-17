@@ -274,25 +274,29 @@ void ImageMasker::splitImageOnGPU(
                              mask.rows() / kThreadsPerThreadBlock.y + 1, 1);
 
   // Initialize the minimum depth image
-  constexpr float max_value = std::numeric_limits<float>::max();
-  DepthImage min_depth_image =
-      DepthImage(mask.rows(), mask.cols(), mask.memory_type());
+  if ((mask.rows() != min_depth_image_.rows()) ||
+      (mask.cols() != min_depth_image_.cols()) ||
+      mask.memory_type() != min_depth_image_.memory_type()) {
+    LOG(INFO) << "Allocating space for minimum depth image";
+    min_depth_image_ = DepthImage(mask.rows(), mask.cols(), mask.memory_type());
+  }
+  constexpr float kMaxValue = std::numeric_limits<float>::max();
   initializeImageKernel<<<num_blocks_mask, kThreadsPerThreadBlock, 0,
                           *cuda_stream_>>>(
-      max_value,                   // NOLINT
-      min_depth_image.rows(),      // NOLINT
-      min_depth_image.cols(),      // NOLINT
-      min_depth_image.dataPtr());  // NOLINT
+      kMaxValue,                    // NOLINT
+      min_depth_image_.rows(),      // NOLINT
+      min_depth_image_.cols(),      // NOLINT
+      min_depth_image_.dataPtr());  // NOLINT
 
   // Find the minimal depth values seen from the mask camera
   constexpr uint8_t kPatchSize = 5;
   getMinimumDepthKernel<kPatchSize>
       <<<num_blocks_depth, kThreadsPerThreadBlock, 0, *cuda_stream_>>>(
-          depth_input.dataConstPtr(),  // NOLINT
-          T_CM_CD,                     // NOLINT
-          depth_camera,                // NOLINT
-          mask_camera,                 // NOLINT
-          min_depth_image.dataPtr());  // NOLINT
+          depth_input.dataConstPtr(),   // NOLINT
+          T_CM_CD,                      // NOLINT
+          depth_camera,                 // NOLINT
+          mask_camera,                  // NOLINT
+          min_depth_image_.dataPtr());  // NOLINT
 
   // Split the depth image according to the mask considering occlusion.
   splitDepthImageKernel<<<num_blocks_depth, kThreadsPerThreadBlock, 0,
@@ -305,7 +309,7 @@ void ImageMasker::splitImageOnGPU(
       occlusion_threshold_m_,                    // NOLINT
       depth_masked_image_invalid_pixel_,         // NOLINT
       depth_unmasked_image_invalid_pixel_,       // NOLINT
-      min_depth_image.dataConstPtr(),            // NOLINT
+      min_depth_image_.dataConstPtr(),           // NOLINT
       unmasked_depth_output->dataPtr(),          // NOLINT
       masked_depth_output->dataPtr(),            // NOLINT
       getOverlayDataPtr(masked_depth_overlay));  // NOLINT
@@ -328,16 +332,19 @@ void ImageMasker::allocateOutput(const ImageType& input,
   // Allocate output images if required
   if ((input.rows() != unmasked_output->rows()) ||
       (input.cols() != unmasked_output->cols())) {
+    LOG(INFO) << "Allocating image for unmasked output";
     *unmasked_output =
         ImageType(input.rows(), input.cols(), input.memory_type());
   }
   if ((input.rows() != masked_output->rows()) ||
       (input.cols() != masked_output->cols())) {
+    LOG(INFO) << "Allocating image for masked output";
     *masked_output = ImageType(input.rows(), input.cols(), input.memory_type());
   }
   if (overlay_output) {
     if ((input.rows() != overlay_output->rows()) ||
         (input.cols() != overlay_output->cols())) {
+      LOG(INFO) << "Allocating image for overlay output";
       *overlay_output =
           ColorImage(input.rows(), input.cols(), input.memory_type());
     }

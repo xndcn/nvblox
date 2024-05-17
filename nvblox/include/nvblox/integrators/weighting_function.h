@@ -13,7 +13,8 @@ enum class WeightingFunctionType {
   kConstantDropoffWeight,
   kInverseSquareWeight,
   kInverseSquareDropoffWeight,
-  kInverseSquareTsdfDistancePenalty
+  kInverseSquareTsdfDistancePenalty,
+  kLinearWithMax
 };
 
 inline std::ostream& operator<<(
@@ -26,6 +27,8 @@ inline std::string to_string(
  * context, so we have to go with a monolithic class. */
 class WeightingFunction {
  public:
+  static constexpr float kDefaultConstantWeight = 1.0f;
+
   __host__ __device__ inline WeightingFunction(WeightingFunctionType type);
   __host__ __device__ ~WeightingFunction() = default;
 
@@ -61,9 +64,12 @@ class WeightingFunction {
   __host__ __device__ inline float computeTsdfDistancePenalty(
       float measured_depth, float voxel_depth, float truncation_distance) const;
 
+  __host__ __device__ inline float computeLinearWithMax(
+      float voxel_depth) const;
+
   WeightingFunctionType type_;
 
-  constexpr static float constant_weight = 1.0f;
+  constexpr static float constant_weight = kDefaultConstantWeight;
 };
 
 }  // namespace nvblox

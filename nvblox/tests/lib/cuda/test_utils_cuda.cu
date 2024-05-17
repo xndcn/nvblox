@@ -62,6 +62,13 @@ __global__ void addOneToAll(int num_elements, int* vec) {
   }
 }
 
+template <typename T>
+__global__ void fill3DGridWithConstantKernel(
+    T value, Index3D min_index, GPU3DGridView<T> gpu_3d_grid_view) {
+  Index3D idx = Index3D(threadIdx.x, threadIdx.y, threadIdx.z) + min_index;
+  gpu_3d_grid_view(idx) = value;
+}
+
 void fillVectorWithConstant(float value, unified_vector<float>* vec_ptr) {
   constexpr int kMaxThreadBlockSize = 512;
   CHECK_LT(vec_ptr->size(), kMaxThreadBlockSize);
@@ -156,6 +163,16 @@ void addOneToAllGPU(unified_vector<int>* vec_ptr) {
   const int kNumBlocks = vec_ptr->size() / kNumThreadsPerBlock + 1;
   addOneToAll<<<kNumBlocks, kNumThreadsPerBlock>>>(vec_ptr->size(),
                                                    vec_ptr->data());
+  checkCudaErrors(cudaDeviceSynchronize());
+  checkCudaErrors(cudaPeekAtLastError());
+}
+
+void fill3DGridWithConstant(int value, const CudaStream& cuda_stream,
+                            Unified3DGrid<int>* grid_ptr) {
+  const Index3D aabb_size = grid_ptr->aabb_size();
+  const dim3 kNumThreads(aabb_size.x(), aabb_size.y(), aabb_size.z());
+  fill3DGridWithConstantKernel<<<1, kNumThreads, 0, cuda_stream>>>(
+      value, grid_ptr->min_index(), grid_ptr->getGPUView());
   checkCudaErrors(cudaDeviceSynchronize());
   checkCudaErrors(cudaPeekAtLastError());
 }

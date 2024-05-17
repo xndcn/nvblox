@@ -18,6 +18,7 @@ limitations under the License.
 #include <nvblox/integrators/internal/cuda/impl/projective_integrator_impl.cuh>
 
 #include "nvblox/integrators/internal/integrators_common.h"
+#include "nvblox/integrators/occupancy_integrator_params.h"
 
 namespace nvblox {
 
@@ -49,15 +50,13 @@ struct UpdateOccupancyVoxelFunctor {
 
   // Sensor model parameters
   float free_region_log_odds_ = logOddsFromProbability(
-      ProjectiveOccupancyIntegrator::kDefaultFreeRegionOccupancyProbability);
-  float occupied_region_log_odds_ =
-      logOddsFromProbability(ProjectiveOccupancyIntegrator::
-                                 kDefaultOccupiedRegionOccupancyProbability);
-  float unobserved_region_log_odds_ =
-      logOddsFromProbability(ProjectiveOccupancyIntegrator::
-                                 kDefaultUnobservedRegionOccupancyProbability);
+      kFreeRegionOccupancyProbabilityParamDesc.default_value);
+  float occupied_region_log_odds_ = logOddsFromProbability(
+      kFreeRegionOccupancyProbabilityParamDesc.default_value);
+  float unobserved_region_log_odds_ = logOddsFromProbability(
+      kUnobservedRegionOccupancyProbabilityParamDesc.default_value);
   float occupied_region_half_width_m_ =
-      ProjectiveOccupancyIntegrator::kDefaultOccupiedRegionHalfWidthM;
+      kOccupiedRegionHalfWidthMParamDesc.default_value;
 
   // Min and max values for clipping
   const float kMaxLogOdds_ = logOddsFromProbability(0.99);

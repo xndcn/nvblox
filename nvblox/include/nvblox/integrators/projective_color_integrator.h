@@ -17,11 +17,14 @@ limitations under the License.
 
 #include "nvblox/core/cuda_stream.h"
 #include "nvblox/integrators/internal/projective_integrator.h"
+#include "nvblox/integrators/projective_integrator_params.h"
 #include "nvblox/integrators/view_calculator.h"
 #include "nvblox/integrators/weighting_function.h"
 #include "nvblox/map/common_names.h"
 #include "nvblox/map/layer.h"
 #include "nvblox/rays/sphere_tracer.h"
+#include "nvblox/sensors/image.h"
+#include "nvblox/sensors/internal/image_cache.h"
 
 namespace nvblox {
 
@@ -138,9 +141,9 @@ class ProjectiveColorIntegrator : public ProjectiveIntegrator<ColorVoxel> {
 
   // Params
   int sphere_tracing_ray_subsampling_factor_ = 4;
-  float max_weight_ = kDefaultMaxWeight;
+  float max_weight_ = kProjectiveIntegratorMaxWeightParamDesc.default_value;
   WeightingFunctionType weighting_function_type_ =
-      kDefaultWeightingFunctionType;
+      kProjectiveIntegratorWeightingModeParamDesc.default_value;
 
   // Frustum calculation.
   mutable ViewCalculator view_calculator_;
@@ -148,8 +151,8 @@ class ProjectiveColorIntegrator : public ProjectiveIntegrator<ColorVoxel> {
   // Object to do ray tracing to generate occlusions
   SphereTracer sphere_tracer_;
 
-  // DepthImage to render synthetic images for occlusions
-  DepthImage synthetic_depth_image_;
+  // DepthImages to render synthetic images for occlusions
+  ImageCache<DepthImage> synthetic_depth_images_;
 
   // Buffers for getting blocks in truncation band
   device_vector<const TsdfBlock*> truncation_band_block_ptrs_device_;

@@ -300,13 +300,29 @@ TEST(LayerTest, MoveOperations) {
   EXPECT_FALSE(tsdf_layer_5.isBlockAllocated(Index3D(1, 1, 1)));
 }
 
+TEST(VoxelLayerTest, allocateAndDeallocateManyBlocks) {
+  // Make sure we don't run out of memory or encountering stability issues when
+  // allocating and deallocating loads of blocks from the memory pool
+  constexpr size_t kNumBlocks = 100000;
+  std::vector<Index3D> block_indices(kNumBlocks);
+
+  for (size_t i = 0; i < kNumBlocks; ++i) {
+    block_indices[i] = Index3D(i, 0, 0);
+  }
+
+  MeshLayer layer(0.1F, MemoryType::kDevice);
+  for (size_t i = 0; i < 100; ++i) {
+    layer.allocateBlocksAtIndices(block_indices, CudaStreamOwning());
+    layer.clearBlocks(block_indices);
+  }
+}
+
 TEST(VoxelLayerTest, CopyVoxelsToHostFromUnified) {
   constexpr float voxel_size_m = 1.0;
   TsdfLayer tsdf_layer(voxel_size_m, MemoryType::kUnified);
   auto block_ptr = tsdf_layer.allocateBlockAtIndex(Index3D(0, 0, 0));
 
   test_utils::setTsdfBlockVoxelsConstant(1.0f, block_ptr);
-
   const auto res = tsdf_layer.getVoxel(Vector3f(0.0f, 0.0f, 0.0f));
 
   EXPECT_TRUE(res.second);

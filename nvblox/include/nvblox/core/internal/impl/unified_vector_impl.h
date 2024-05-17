@@ -351,4 +351,13 @@ void unified_vector<T>::setZeroAsync(const CudaStream cuda_stream) {
       cudaMemsetAsync(buffer_, 0, buffer_size_ * sizeof(T), cuda_stream));
 }
 
+template <typename T>
+void unified_vector<T>::setAsync(int val, const CudaStream cuda_stream) {
+  // It is safe to use cudaMemset since the memory is ALWAYS allocated with
+  // cudaMalloc.
+  CHECK(buffer_ != nullptr);
+  checkCudaErrors(
+      cudaMemsetAsync(buffer_, val, buffer_size_ * sizeof(T), cuda_stream));
+}
+
 }  // namespace nvblox

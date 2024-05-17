@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "nvblox/integrators/internal/cuda/impl/projective_integrator_impl.cuh"
 #include "nvblox/integrators/internal/integrators_common.h"
+#include "nvblox/integrators/projective_integrator_params.h"
 #include "nvblox/integrators/weighting_function.h"
 
 namespace nvblox {
@@ -72,10 +73,10 @@ struct UpdateTsdfVoxelFunctor {
   }
 
   float truncation_distance_m_ = 0.2f;
-  float max_weight_ = ProjectiveTsdfIntegrator::kDefaultMaxWeight;
+  float max_weight_ = kProjectiveIntegratorMaxWeightParamDesc.default_value;
 
-  WeightingFunction weighting_function_ = WeightingFunction(
-      ProjectiveTsdfIntegrator::kDefaultWeightingFunctionType);
+  WeightingFunction weighting_function_ =
+      kProjectiveIntegratorWeightingModeParamDesc.default_value;
 };
 
 ProjectiveTsdfIntegrator::ProjectiveTsdfIntegrator()

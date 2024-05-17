@@ -22,23 +22,30 @@ limitations under the License.
 
 namespace nvblox {
 
-void weldVerticesThrust(const std::vector<Index3D>& block_indices,
-                        BlockLayer<MeshBlock>* mesh_layer);
-void weldSingleBlockThrust(device_vector<Vector3f>* input_vertices,
-                           device_vector<int>* input_indices,
-                           device_vector<Vector3f>* output_vertices,
-                           device_vector<int>* output_indices);
+void weldVerticesThrustAsync(const std::vector<Index3D>& block_indices,
+                             BlockLayer<MeshBlock>* mesh_layer,
+                             const CudaStream& cuda_stream);
+void weldSingleBlockThrustAsync(device_vector<Vector3f>* input_vertices,
+                                device_vector<int>* input_indices,
+                                device_vector<Vector3f>* output_vertices,
+                                device_vector<int>* output_indicesm,
+                                const CudaStream& cuda_stream);
 
-void sortSingleBlockThrust(device_vector<Vector3f>* vertices);
-void sortSingleBlockCub(device_vector<Vector3f>* input_vertices,
-                        device_vector<Vector3f>* output_vertices);
+void sortSingleBlockThrustAsync(device_vector<Vector3f>* vertices,
+                                const CudaStream& cuda_stream);
 
-void uniqueSingleBlockCub(device_vector<Vector3f>* input_vertices,
-                          device_vector<Vector3f>* output_vertices);
+void sortSingleBlockCubAsync(device_vector<Vector3f>* input_vertices,
+                             device_vector<Vector3f>* output_vertices,
+                             const CudaStream& cuda_stream);
 
-void combinedSingleBlockCub(device_vector<Vector3f>* input_vertices,
-                            device_vector<int>* input_indices,
-                            device_vector<Vector3f>* output_vertices,
-                            device_vector<int>* output_indices);
+void uniqueSingleBlockCubAsync(device_vector<Vector3f>* input_vertices,
+                               device_vector<Vector3f>* output_vertices,
+                               const CudaStream& cuda_stream);
+
+void combinedSingleBlockCubAsync(device_vector<Vector3f>* input_vertices,
+                                 device_vector<int>* input_indices,
+                                 device_vector<Vector3f>* output_vertices,
+                                 device_vector<int>* output_indices,
+                                 const CudaStream& cuda_stream);
 
 }  // namespace nvblox

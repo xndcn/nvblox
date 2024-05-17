@@ -1,9 +1,6 @@
-# nvblox ![nvblox_logo](docs/images/nvblox_logo_64.png)
+![nvblox](docs/images/nvblox_logo_64.png)
 
-Signed Distance Functions (SDFs) on NVIDIA GPUs.
-
-<div align="center"><img src="docs/images/3dmatch.gif" width=600px/></div>
-
+![Signed Distance Functions (SDFs) on NVIDIA GPUs](docs/images/3dmatch.gif)
 
 A GPU SDF library which offers
 * GPU accelerated algorithms such as:
@@ -20,6 +17,7 @@ Above we show reconstruction using data from the [3DMatch dataset](https://3dmat
 
 - [nvblox ](#nvblox-)
   - [Table of Contents](#table-of-contents)
+  - [Paper](#paper)
 - [Why nvblox?](#why-nvblox)
 - [How to use nvblox](#how-to-use-nvblox)
   - [Out-of-the-box Reconstruction/ROS 2 Interface](#out-of-the-box-reconstructionros-2-interface)
@@ -30,11 +28,27 @@ Above we show reconstruction using data from the [3DMatch dataset](https://3dmat
   - [Build and run tests and benchmark](#build-and-run-tests-and-benchmark)
   - [Run an example](#run-an-example)
 - [Docker](#docker)
-- [Additional instructions for Jetson Xavier](#additional-instructions-for-jetson-xavier)
-  - [Open3D on Jetson](#open3d-on-jetson)
+- [Open3D on Jetson](#open3d-on-jetson)
 - [Building for multiple GPU architectures](#building-for-multiple-gpu-architectures)
 - [Building redistributable binaries, with static dependencies](#building-redistributable-binaries-with-static-dependencies)
 - [License](#license)
+
+## Paper
+If you find this library useful for your research, please consider citing our paper:
+
+* Alexander Millane, Helen Oleynikova, Emilie Wirbel, Remo Steiner, Vikram Ramasamy, David Tingdahl, and Roland Siegwart. "**nvblox: GPU-Accelerated Incremental Signed Distance Field Mapping**".
+arXiv preprint arXiv:2311.00626. \[ [ArXiv](https://arxiv.org/abs/2311.00626) \]
+
+```bibtex
+@misc{millane2024nvblox,
+      title={nvblox: GPU-Accelerated Incremental Signed Distance Field Mapping},
+      author={Alexander Millane and Helen Oleynikova and Emilie Wirbel and Remo Steiner and Vikram Ramasamy and David Tingdahl and Roland Siegwart},
+      year={2024},
+      eprint={2311.00626},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO}
+}
+```
 
 # Why nvblox?
 
@@ -45,7 +59,7 @@ Do we need another SDF library? That depends on your use case. If you're interes
 
 Below we visualize slices through a distance function (ESDF):
 
-<div align="center"><img src="docs/images/nvblox_slice.gif" width=600px/></div>
+![](docs/images/nvblox_slice.gif)
 
 
 # How to use nvblox
@@ -56,19 +70,19 @@ How use nvblox depends on what you want to do.
 For users who would like to use nvblox in a robotic system or connect easily to a sensor, we suggest using our [ROS 2 interface](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nvblox).
 
 The ROS 2 interface includes examples which allow you to:
-* Build a reconstruction from a realsense camera using nvblox and NVIDIA VSLAM [here](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nvblox/blob/main/docs/tutorial-realsense.md).
-* Navigate a robot in Isaac Sim [here](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nvblox/blob/main/docs/tutorial-isaac-sim.md).
-* Combine 3D reconstruction with image segmentation with [realsense data](https://gitlab-master.nvidia.com/isaac_ros/isaac_ros_nvblox/-/blob/envoy-dev/docs/tutorial-human-reconstruction-realsense.md) and in [simulation](https://gitlab-master.nvidia.com/isaac_ros/isaac_ros_nvblox/-/blob/envoy-dev/docs/tutorial-human-reconstruction-isaac-sim.md).
+* Build a reconstruction from a Realsense camera using nvblox and NVIDIA VSLAM
+* Navigate a robot in Isaac Sim
+* Combine 3D reconstruction with image segmentation with realsense data and in simulation
 
 The ROS 2 interface downloads and builds the library contained in this repository during installation, so you don't need to clone and build this repository at all.
 
 ## Public Datasets
 
-If you would like to run nvblox on a public datasets, we include some executables for running reconstructions on [3DMatch](https://3dmatch.cs.princeton.edu/), [Replica](https://github.com/facebookresearch/Replica-Dataset), and [Redwood](http://redwood-data.org/indoor_lidar_rgbd/index.html) datasets. Please see our [tutorial](./docs/pages/tutorial_public_datasets.md) on running these.
+If you would like to run nvblox on a public datasets, we include some executables for running reconstructions on [3DMatch](https://3dmatch.cs.princeton.edu/), [Replica](https://github.com/facebookresearch/Replica-Dataset), and [Redwood](http://redwood-data.org/indoor_lidar_rgbd/index.html) datasets. Please see our [tutorial](docs/pages/tutorial_public_datasets.md) on running these.
 
 ## C++ Interface
 
-If you want to build nvblox into a larger project, without ROS, or you would like to make modifications to nvblox's core reconstruction features, this repository contains the code you need. Our [tutorial](./docs/pages/tutorial_library_interface.md) provides some brief details of how to interact with the reconstruction in c++.
+If you want to build nvblox into a larger project, without ROS, or you would like to make modifications to nvblox's core reconstruction features, this repository contains the code you need. Our [tutorial](docs/pages/tutorial_library_interface.md) provides some brief details of how to interact with the reconstruction in c++.
 
 
 # Native Installation
@@ -80,7 +94,7 @@ We depend on:
 - glog
 - gflags
 - SQLite 3
-- CUDA 11.0 - 11.8 (others might work but are untested)
+- CUDA 11.0 - 12.2 (others might work but are untested)
 - Eigen (no need to explicitly install, a recent version is built into the library)
 - stdgpu (downloaded during compilation)
 Please run
@@ -101,7 +115,6 @@ cmake .. && make
 Run test and benchmark from build dir:
 ```
 ctest
-executables/benchmark
 ```
 
 ## Run an example
@@ -119,26 +132,20 @@ Once it's done we can view the output mesh using the Open3D viewer. Instructions
 ```
 Open3D mesh.ply
 ```
-you should see a mesh of a room:
-<div align="center"><img src="docs/images/reconstruction_in_docker_trim.png" width=600px/></div>
+You should see a mesh of a room:
+![](docs/images/reconstruction_in_docker_trim.png)
 
-# Docker
+# Docker {#docker}
 
 We have several dockerfiles (in the `docker` subfolder) which layer on top of one another for the following purposes:
 
 * **Docker.deps**
-* * This installs our dependencies.
-* * This is used in our CI, where the later steps (building and testing) are taken care of by Jenkins (and not docker).
+  * This installs our dependencies.
 * **Docker.jetson_deps**
-* * Same as above, just on the Jetson (Jetpack 5 and above).
+  * Same as above, just on the Jetson (Jetpack 6 and above).
 * **Docker.build**
-* * Layers on top of Docker.deps.
-* * This builds our package.
-* * This is where you get off the layer train if you wanna run stuff (and don't care if it's tested).
-* **Docker.test**
-* * Layers on top of Docker.build.
-* * Runs ours tests.
-* * Useful for checking if things are likely to pass the tests in CI.
+  * Layers on top of Docker.deps.
+  * This builds our package.
 
 We rely on nvidia docker. Install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) following the instructions on that website.
 
@@ -149,9 +156,9 @@ We use the GPU during build, not only at run time. In the default configuration 
         "nvidia": {
             "path": "/usr/bin/nvidia-container-runtime",
             "runtimeArgs": []
-         } 
+         }
     },
-    "default-runtime": "nvidia" 
+    "default-runtime": "nvidia"
 }
 ```
 Restart docker
@@ -168,7 +175,7 @@ Now let's build the Dockerfile.build. This image layers on the last, and actuall
 ```
 docker build -t nvblox -f docker/Dockerfile.build .
 ```
-Now let's run the 3DMatch example inside the docker. Note there's some additional complexity in the `docker run` command such that we can forward X11 to the host (we're going to be view a reconstruction in a GUI). Run the container using:
+Now let's run the 3DMatch example inside the docker. Note there's some additional complexity in the `docker run` command such that we can forward X11 to the host (we're going to be view a reconstruction in a GUI). Note that visualization does not work over SSH connections. Run the container using:
 ```
 xhost local:docker
 docker run -it --net=host --env="DISPLAY" -v $HOME/.Xauthority:/root/.Xauthority:rw -v /tmp/.X11-unix:/tmp/.X11-unix:rw nvblox
@@ -191,37 +198,11 @@ Open3D mesh.ply
 ```
 to visualize on the jetson see [below](#open3d-on-jetson).
 
-# Additional instructions for Jetson Xavier
-These instructions are for a native build on the Jetson Xavier. You can see the instructions above for running in docker.
-
-The instructions for the native build above work, with one exception:
-
-We build using CMake's modern CUDA integration and therefore require a more modern version of CMAKE than (currently) ships with jetpack. Luckily the Cmake developer team provide a means obtaining recent versions of CMake through apt.
-
-1. Obtain a copy of the signing key:
-```
-wget -qO - https://apt.kitware.com/keys/kitware-archive-latest.asc |
-    sudo apt-key add -
-```
-2. Add the repository to your sources list and update.
-```
-sudo apt-add-repository 'deb https://apt.kitware.com/ubuntu/ focal main'
-sudo apt-get update
-```
-3. Update!
-```
-sudo apt-get install cmake
-```
-4. To use the python examples, it is also necessary to make numpy play nice with the Jetson. You can do that by adding the following to your `~/.bashrc`:
-```
-export OPENBLAS_CORETYPE=ARMV8
-```
-
-## Open3D on Jetson
+# Open3D on Jetson {#open3d-on-jetson}
 Open3D is available pre-compiled for the jetson ([details here](http://www.open3d.org/docs/release/arm.html)). Install via pip:
 ```
-apt-get install python3-pip
-pip3 install open3d==0.16.0
+sudo apt-get install python3-pip
+sudo pip3 install open3d==0.16.0
 ```
 > If version `0.16.0` is not available you need to upgrade your pip with `pip3 install -U pip`. You may additionally need to add the upgraded pip version to your path.
 
@@ -231,13 +212,14 @@ open3d draw mesh.ply
 ```
 
 # Building for multiple GPU architectures
-By default, the library builds ONLY for the compute capability (CC) of the machine it's being built on. To build binaries that can be used across multiple machines (i.e., pre-built binaries for CI, for example), you can use the `BUILD_FOR_ALL_ARCHS` flag and set it to true. Example:
+By default, the library builds ONLY for the compute capability (CC) of the machine it's being built on. To build binaries that can be used across multiple machines (i.e., pre-built binaries for CI, for example), you can use the `CMAKE_CUDA_ARCHITECTURE` flag and set it to a semicolon-separated list of architectures to support.
 ```
-cmake .. -DBUILD_FOR_ALL_ARCHS=True -DCMAKE_INSTALL_PREFIX=../install/ && make -j8 && make install
+cmake .. '-DCMAKE_CUDA_ARCHITECTURES=75;72' -DCMAKE_INSTALL_PREFIX=../install/ && make -j8 && make install
 ```
 
 # Building redistributable binaries, with static dependencies
 If you want to include nvblox in another CMake project, simply `find_package(nvblox)` should bring in the correct libraries and headers. However, if you want to include it in a different build system such as Bazel, you can see the instructions [here](./docs/redistributable.md).
 
 # License
-This code is under an [open-source license](LICENSE) (Apache 2.0). :)
+This code is under an [open-source license](@ref license) (Apache 2.0). :)
+

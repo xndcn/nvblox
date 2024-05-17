@@ -17,6 +17,7 @@ limitations under the License.
 #include "nvblox/core/unified_vector.h"
 #include "nvblox/map/blox.h"
 #include "nvblox/map/common_names.h"
+#include "nvblox/map/unified_3d_grid.h"
 
 namespace nvblox {
 namespace test_utils {
@@ -34,6 +35,9 @@ bool checkAllConstant(const float* vec_ptr, float value, size_t num_elems);
 bool checkAllConstant(const int* vec_ptr, int value, size_t num_elems);
 
 void addOneToAllGPU(unified_vector<int>* vec_ptr);
+
+void fill3DGridWithConstant(int value, const CudaStream& cuda_stream,
+                            Unified3DGrid<int>* grid_ptr);
 
 }  // namespace test_utils
 }  // namespace nvblox

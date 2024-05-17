@@ -69,7 +69,8 @@ void VoxelBlockLayer<VoxelType>::getVoxelsGPU(
 
   queryVoxelsKernel<VoxelType>
       <<<num_blocks, kNumThreads, 0, *cuda_stream_ptr>>>(
-          num_queries, this->getGpuLayerView().getHash().impl_,
+          num_queries,
+          this->getGpuLayerViewAsync(*cuda_stream_ptr).getHash().impl_,
           this->block_size_, positions_L.data(), voxels_ptr->data(),
           success_flags_ptr->data());
 

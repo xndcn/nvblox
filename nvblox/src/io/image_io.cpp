@@ -71,12 +71,12 @@ bool writeToPng(const std::string& filepath, const DepthImage& frame) {
   depth_image_gpu_ptr->copyFrom(frame);
 
   // Scale the image 0-255 uint8_t
-  float max_value = image::maxGPU(*depth_image_gpu_ptr);
+  float max_value = image::maxGPU(*depth_image_gpu_ptr, CudaStreamOwning());
   const float scale_factor = std::numeric_limits<uint8_t>::max() / max_value;
-  image::elementWiseMultiplicationInPlaceGPU(scale_factor,
-                                             depth_image_gpu_ptr.get());
+  image::elementWiseMultiplicationInPlaceGPUAsync(
+      scale_factor, depth_image_gpu_ptr.get(), CudaStreamOwning());
   MonoImage image_out(MemoryType::kHost);
-  image::castGPU(*depth_image_gpu_ptr, &image_out);
+  image::castGPUAsync(*depth_image_gpu_ptr, &image_out, CudaStreamOwning());
 
   // Write as mono image
   return writeToPng(filepath, image_out);

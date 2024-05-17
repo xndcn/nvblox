@@ -149,6 +149,10 @@ class Image : public ImageBase<_ElementType> {
   void copyFrom(const size_t rows, const size_t cols,
                 const ElementType* const buffer);
 
+  // Copy to a buffer. We assume the buffer has sufficient capacity.
+  void copyToAsync(ElementType* buffer, const CudaStream cuda_stream) const;
+  void copyTo(ElementType* buffer) const;
+
  protected:
   MemoryType memory_type_;
   unified_ptr<ElementType[]> owned_data_;
@@ -203,31 +207,49 @@ using MonoImageConstView = ImageView<const uint8_t>;
 // Image Operations
 namespace image {
 
-float maxGPU(const DepthImage& image);
-float minGPU(const DepthImage& image);
-uint8_t maxGPU(const MonoImage& image);
-uint8_t minGPU(const MonoImage& image);
-std::pair<float, float> minmaxGPU(const DepthImage& image);
+// Note that the min/max operations synchronizes the cuda stream
+float maxGPU(const DepthImage& image, const CudaStream& cuda_stream);
+float minGPU(const DepthImage& image, const CudaStream& cuda_stream);
+uint8_t maxGPU(const MonoImage& image, const CudaStream& cuda_stream);
+uint8_t minGPU(const MonoImage& image, const CudaStream& cuda_stream);
+std::pair<float, float> minmaxGPU(const DepthImage& image,
+                                  const CudaStream& cuda_stream);
 
-void elementWiseMinInPlaceGPU(const float constant, DepthImage* image);
-void elementWiseMaxInPlaceGPU(const float constant, DepthImage* image);
+void elementWiseMinInPlaceGPUAsync(const float constant, DepthImage* image,
+                                   const CudaStream& cuda_stream);
+void elementWiseMaxInPlaceGPUAsync(const float constant, DepthImage* image,
+                                   const CudaStream& cuda_stream);
 
-void elementWiseMaxInPlaceGPU(const DepthImage& image_1, DepthImage* image_2);
-void elementWiseMaxInPlaceGPU(const MonoImage& image_1, MonoImage* image_2);
-void elementWiseMinInPlaceGPU(const DepthImage& image_1, DepthImage* image_2);
-void elementWiseMinInPlaceGPU(const MonoImage& image_1, MonoImage* image_2);
+void elementWiseMaxInPlaceGPUAsync(const DepthImage& image_1,
+                                   DepthImage* image_2,
+                                   const CudaStream& cuda_stream);
+void elementWiseMaxInPlaceGPUAsync(const MonoImage& image_1, MonoImage* image_2,
+                                   const CudaStream& cuda_stream);
+void elementWiseMinInPlaceGPUAsync(const DepthImage& image_1,
+                                   DepthImage* image_2,
+                                   const CudaStream& cuda_stream);
+void elementWiseMinInPlaceGPUAsync(const MonoImage& image_1, MonoImage* image_2,
+                                   const CudaStream& cuda_stream);
 
-void elementWiseMultiplicationInPlaceGPU(const float constant,
-                                         DepthImage* image);
+void elementWiseMultiplicationInPlaceGPUAsync(const float constant,
+                                              DepthImage* image,
+                                              const CudaStream& cuda_stream);
 
-void getDifferenceImageGPU(const DepthImage& image_1, const DepthImage& image_2,
-                           DepthImage* diff_image_ptr);
-void getDifferenceImageGPU(const ColorImage& image_1, const ColorImage& image_2,
-                           ColorImage* diff_image_ptr);
-void getDifferenceImageGPU(const MonoImage& image_1, const MonoImage& image_2,
-                           MonoImage* diff_image_ptr);
+void getDifferenceImageGPUAsync(const DepthImage& image_1,
+                                const DepthImage& image_2,
+                                DepthImage* diff_image_ptr,
+                                const CudaStream& cuda_stream);
+void getDifferenceImageGPUAsync(const ColorImage& image_1,
+                                const ColorImage& image_2,
+                                ColorImage* diff_image_ptr,
+                                const CudaStream& cuda_stream);
+void getDifferenceImageGPUAsync(const MonoImage& image_1,
+                                const MonoImage& image_2,
+                                MonoImage* diff_image_ptr,
+                                const CudaStream& cuda_stream);
 
-void castGPU(const DepthImage& image_in, MonoImage* image_out_ptr);
+void castGPUAsync(const DepthImage& image_in, MonoImage* image_out_ptr,
+                  const CudaStream& cuda_stream);
 
 }  // namespace image
 }  // namespace nvblox

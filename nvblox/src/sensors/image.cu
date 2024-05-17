@@ -26,34 +26,51 @@ namespace nvblox {
 namespace image {
 
 template <typename ElementType>
-ElementType maxGPUTemplate(const Image<ElementType>& image) {
+ElementType maxGPUTemplate(const Image<ElementType>& image,
+                           const CudaStream& cuda_stream) {
   const thrust::device_ptr<const ElementType> dev_ptr(image.dataConstPtr());
-  const thrust::device_ptr<const ElementType> max_elem = thrust::max_element(
-      thrust::device, dev_ptr, dev_ptr + (image.rows() * image.cols()));
+  const thrust::device_ptr<const ElementType> max_elem =
+      thrust::max_element(thrust::device.on(cuda_stream), dev_ptr,
+                          dev_ptr + (image.rows() * image.cols()));
+  cuda_stream.synchronize();
   return *max_elem;
 }
 
 template <typename ElementType>
-ElementType minGPUTemplate(const Image<ElementType>& image) {
+ElementType minGPUTemplate(const Image<ElementType>& image,
+                           const CudaStream& cuda_stream) {
   const thrust::device_ptr<const ElementType> dev_ptr(image.dataConstPtr());
-  const thrust::device_ptr<const ElementType> min_elem = thrust::min_element(
-      thrust::device, dev_ptr, dev_ptr + (image.rows() * image.cols()));
+  const thrust::device_ptr<const ElementType> min_elem =
+      thrust::min_element(thrust::device.on(cuda_stream), dev_ptr,
+                          dev_ptr + (image.rows() * image.cols()));
+  cuda_stream.synchronize();
   return *min_elem;
 }
 
-float maxGPU(const DepthImage& image) { return maxGPUTemplate(image); }
+float maxGPU(const DepthImage& image, const CudaStream& cuda_stream) {
+  return maxGPUTemplate(image, cuda_stream);
+}
 
-float minGPU(const DepthImage& image) { return minGPUTemplate(image); }
+float minGPU(const DepthImage& image, const CudaStream& cuda_stream) {
+  return minGPUTemplate(image, cuda_stream);
+}
 
-uint8_t maxGPU(const MonoImage& image) { return maxGPUTemplate(image); }
+uint8_t maxGPU(const MonoImage& image, const CudaStream& cuda_stream) {
+  return maxGPUTemplate(image, cuda_stream);
+}
 
-uint8_t minGPU(const MonoImage& image) { return minGPUTemplate(image); }
+uint8_t minGPU(const MonoImage& image, const CudaStream& cuda_stream) {
+  return minGPUTemplate(image, cuda_stream);
+}
 
-std::pair<float, float> minmaxGPU(const DepthImage& image) {
+std::pair<float, float> minmaxGPU(const DepthImage& image,
+                                  const CudaStream& cuda_stream) {
   // Wrap our memory and reduce using thrust
   const thrust::device_ptr<const float> dev_ptr(image.dataConstPtr());
-  const auto minmax_elem = thrust::minmax_element(
-      thrust::device, dev_ptr, dev_ptr + (image.rows() * image.cols()));
+  const auto minmax_elem =
+      thrust::minmax_element(thrust::device.on(cuda_stream), dev_ptr,
+                             dev_ptr + (image.rows() * image.cols()));
+  cuda_stream.synchronize();
   return {*minmax_elem.first, *minmax_elem.second};
 }
 
@@ -77,63 +94,74 @@ struct min_with_constant_functor {
   }
 };
 
-void elementWiseMinInPlaceGPU(const float constant, DepthImage* image) {
+void elementWiseMinInPlaceGPUAsync(const float constant, DepthImage* image,
+                                   const CudaStream& cuda_stream) {
   thrust::device_ptr<float> dev_ptr(image->dataPtr());
-  thrust::transform(thrust::device, dev_ptr,
+  thrust::transform(thrust::device.on(cuda_stream), dev_ptr,
                     dev_ptr + (image->rows() * image->cols()), dev_ptr,
                     min_with_constant_functor(constant));
 }
 
-void elementWiseMaxInPlaceGPU(const float constant, DepthImage* image) {
+void elementWiseMaxInPlaceGPUAsync(const float constant, DepthImage* image,
+                                   const CudaStream& cuda_stream) {
   thrust::device_ptr<float> dev_ptr(image->dataPtr());
-  thrust::transform(thrust::device, dev_ptr,
+  thrust::transform(thrust::device.on(cuda_stream), dev_ptr,
                     dev_ptr + (image->rows() * image->cols()), dev_ptr,
                     max_with_constant_functor(constant));
 }
 
 template <typename ImageType, typename OpType>
-void elementWiseOpInPlaceGPUTemplate(const ImageType& image_1,
-                                     ImageType* image_2, OpType op) {
+void elementWiseOpInPlaceGPUTemplateAsync(const ImageType& image_1,
+                                          ImageType* image_2, OpType op,
+                                          const CudaStream& cuda_stream) {
   using ElementType = typename ImageType::ElementType;
   CHECK_NOTNULL(image_2);
   CHECK_EQ(image_1.rows(), image_2->rows());
   CHECK_EQ(image_1.cols(), image_2->cols());
   thrust::device_ptr<const ElementType> dev_1_ptr(image_1.dataConstPtr());
   thrust::device_ptr<ElementType> dev_2_ptr(image_2->dataPtr());
-  thrust::transform(thrust::device, dev_1_ptr, dev_1_ptr + image_1.numel(),
-                    dev_2_ptr, dev_2_ptr, op);
+  thrust::transform(thrust::device.on(cuda_stream), dev_1_ptr,
+                    dev_1_ptr + image_1.numel(), dev_2_ptr, dev_2_ptr, op);
 }
 
 template <typename ImageType>
-void elementWiseMaxInPlaceGPUTemplate(const ImageType& image_1,
-                                      ImageType* image_2) {
+void elementWiseMaxInPlaceGPUTemplateAsync(const ImageType& image_1,
+                                           ImageType* image_2,
+                                           const CudaStream& cuda_stream) {
   using ElementType = typename ImageType::ElementType;
-  elementWiseOpInPlaceGPUTemplate(image_1, image_2,
-                                  thrust::maximum<ElementType>());
+  elementWiseOpInPlaceGPUTemplateAsync(
+      image_1, image_2, thrust::maximum<ElementType>(), cuda_stream);
 }
 
-void elementWiseMaxInPlaceGPU(const DepthImage& image_1, DepthImage* image_2) {
-  elementWiseMaxInPlaceGPUTemplate(image_1, image_2);
+void elementWiseMaxInPlaceGPUAsync(const DepthImage& image_1,
+                                   DepthImage* image_2,
+                                   const CudaStream& cuda_stream) {
+  elementWiseMaxInPlaceGPUTemplateAsync(image_1, image_2, cuda_stream);
 }
 
-void elementWiseMaxInPlaceGPU(const MonoImage& image_1, MonoImage* image_2) {
-  elementWiseMaxInPlaceGPUTemplate(image_1, image_2);
+void elementWiseMaxInPlaceGPUAsync(const MonoImage& image_1, MonoImage* image_2,
+                                   const CudaStream& cuda_stream) {
+  elementWiseMaxInPlaceGPUTemplateAsync(image_1, image_2, cuda_stream);
 }
 
 template <typename ImageType>
-void elementWiseMinInPlaceGPUTemplate(const ImageType& image_1,
-                                      ImageType* image_2) {
+void elementWiseMinInPlaceGPUTemplateAsync(const ImageType& image_1,
+                                           ImageType* image_2,
+                                           const CudaStream& cuda_stream) {
   using ElementType = typename ImageType::ElementType;
-  elementWiseOpInPlaceGPUTemplate(image_1, image_2,
-                                  thrust::minimum<ElementType>());
+  elementWiseOpInPlaceGPUTemplateAsync(
+      image_1, image_2, thrust::minimum<ElementType>(), cuda_stream);
 }
 
-void elementWiseMinInPlaceGPU(const DepthImage& image_1, DepthImage* image_2) {
-  elementWiseMinInPlaceGPUTemplate(image_1, image_2);
+void elementWiseMinInPlaceGPUAsync(const DepthImage& image_1,
+                                   DepthImage* image_2,
+                                   const CudaStream& cuda_stream) {
+  elementWiseMinInPlaceGPUTemplateAsync(image_1, image_2, cuda_stream);
 }
 
-void elementWiseMinInPlaceGPU(const MonoImage& image_1, MonoImage* image_2) {
-  elementWiseMinInPlaceGPUTemplate(image_1, image_2);
+void elementWiseMinInPlaceGPUAsync(const MonoImage& image_1, MonoImage* image_2,
+                                   const CudaStream& cuda_stream) {
+  elementWiseMinInPlaceGPUTemplateAsync(image_1, image_2, cuda_stream);
 }
 
 struct multiply_with_constant_functor {
@@ -146,10 +174,11 @@ struct multiply_with_constant_functor {
   }
 };
 
-void elementWiseMultiplicationInPlaceGPU(const float constant,
-                                         DepthImage* image) {
+void elementWiseMultiplicationInPlaceGPUAsync(const float constant,
+                                              DepthImage* image,
+                                              const CudaStream& cuda_stream) {
   thrust::device_ptr<float> dev_ptr(image->dataPtr());
-  thrust::transform(thrust::device, dev_ptr,
+  thrust::transform(thrust::device.on(cuda_stream), dev_ptr,
                     dev_ptr + (image->rows() * image->cols()), dev_ptr,
                     multiply_with_constant_functor(constant));
 }
@@ -192,9 +221,10 @@ __global__ void differenceImageKernel(ElementType* diff_image_ptr,
 }
 
 template <typename ImageType>
-void getDifferenceImageGPUTemplate(const ImageType& image_1,
-                                   const ImageType& image_2,
-                                   ImageType* diff_image_ptr) {
+void getDifferenceImageGPUTemplateAsync(const ImageType& image_1,
+                                        const ImageType& image_2,
+                                        ImageType* diff_image_ptr,
+                                        const CudaStream& cuda_stream) {
   CHECK_NOTNULL(diff_image_ptr);
   CHECK_EQ(image_1.rows(), image_2.rows());
   CHECK_EQ(image_1.cols(), image_2.cols());
@@ -217,26 +247,35 @@ void getDifferenceImageGPUTemplate(const ImageType& image_1,
                   kThreadsPerBlockInEachDimension);
   dim3 gridShape((image_1.rows() / kThreadsPerBlockInEachDimension) + 1,
                  (image_1.cols() / kThreadsPerBlockInEachDimension) + 1);
-  differenceImageKernel<<<gridShape, blockShape>>>(
+  differenceImageKernel<<<gridShape, blockShape, 0, cuda_stream>>>(
       diff_image_ptr->dataPtr(), image_1.rows(), image_1.cols(),
       image_1.dataConstPtr(), image_2.dataConstPtr());
   checkCudaErrors(cudaGetLastError());
   checkCudaErrors(cudaDeviceSynchronize());
 }
 
-void getDifferenceImageGPU(const DepthImage& image_1, const DepthImage& image_2,
-                           DepthImage* diff_image_ptr) {
-  getDifferenceImageGPUTemplate(image_1, image_2, diff_image_ptr);
+void getDifferenceImageGPUAsync(const DepthImage& image_1,
+                                const DepthImage& image_2,
+                                DepthImage* diff_image_ptr,
+                                const CudaStream& cuda_stream) {
+  getDifferenceImageGPUTemplateAsync(image_1, image_2, diff_image_ptr,
+                                     cuda_stream);
 }
 
-void getDifferenceImageGPU(const ColorImage& image_1, const ColorImage& image_2,
-                           ColorImage* diff_image_ptr) {
-  getDifferenceImageGPUTemplate(image_1, image_2, diff_image_ptr);
+void getDifferenceImageGPUAsync(const ColorImage& image_1,
+                                const ColorImage& image_2,
+                                ColorImage* diff_image_ptr,
+                                const CudaStream& cuda_stream) {
+  getDifferenceImageGPUTemplateAsync(image_1, image_2, diff_image_ptr,
+                                     cuda_stream);
 }
 
-void getDifferenceImageGPU(const MonoImage& image_1, const MonoImage& image_2,
-                           MonoImage* diff_image_ptr) {
-  getDifferenceImageGPUTemplate(image_1, image_2, diff_image_ptr);
+void getDifferenceImageGPUAsync(const MonoImage& image_1,
+                                const MonoImage& image_2,
+                                MonoImage* diff_image_ptr,
+                                const CudaStream& cuda_stream) {
+  getDifferenceImageGPUTemplateAsync(image_1, image_2, diff_image_ptr,
+                                     cuda_stream);
 }
 
 template <typename OutputType, typename InputType>
@@ -254,8 +293,9 @@ __device__ OutputType elementCast(const InputType input) {
 }
 
 template <typename InputImageType, typename OutputImageType>
-void castTemplate(const InputImageType& image_in,
-                  OutputImageType* image_out_ptr) {
+void castTemplateAsync(const InputImageType& image_in,
+                       OutputImageType* image_out_ptr,
+                       const CudaStream& cuda_stream) {
   CHECK(image_in.memory_type() == MemoryType::kDevice ||
         image_in.memory_type() == MemoryType::kUnified);
   if (image_in.rows() != image_out_ptr->rows() ||
@@ -272,14 +312,15 @@ void castTemplate(const InputImageType& image_in,
       image_in.dataConstPtr());
   thrust::device_ptr<OutputElementType> dev_output_ptr(
       image_out_ptr->dataPtr());
-  thrust::transform(thrust::device, dev_input_ptr,
+  thrust::transform(thrust::device.on(cuda_stream), dev_input_ptr,
                     dev_input_ptr + (image_in.rows() * image_in.cols()),
                     dev_output_ptr,
                     cast_functor<OutputElementType, InputElementType>());
 }
 
-void castGPU(const DepthImage& image_in, MonoImage* image_out_ptr) {
-  castTemplate(image_in, image_out_ptr);
+void castGPUAsync(const DepthImage& image_in, MonoImage* image_out_ptr,
+                  const CudaStream& cuda_stream) {
+  castTemplateAsync(image_in, image_out_ptr, cuda_stream);
 }
 
 }  // namespace image

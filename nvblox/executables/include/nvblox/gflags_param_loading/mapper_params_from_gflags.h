@@ -24,93 +24,138 @@ namespace nvblox {
 // <<<<<<<<<<<<<<<<<<<<<<<<<< DEFINE THE PARAMS >>>>>>>>>>>>>>>>>>>>>>>>>>
 
 // ======= MAPPER =======
-// depth preprocessing
-DEFINE_bool(do_depth_preprocessing, mapper::kDefaultDoDepthPreprocessing,
-            "Whether or not to run the preprocessing pipeline on the input "
-            "depth image");
-DEFINE_int32(depth_preprocessing_num_dilations, -1,
-             "Number of times to run the invalid region dilation in the depth "
-             "preprocessing pipeline.");
+DEFINE_bool(do_depth_preprocessing, kDoDepthPrepocessingParamDesc.default_value,
+            kDoDepthPrepocessingParamDesc.help_string);
+
+DEFINE_int32(depth_preprocessing_num_dilations,
+             kDepthPreprocessingNumDilationsParamDesc.default_value,
+             kDepthPreprocessingNumDilationsParamDesc.help_string);
+
+DEFINE_double(esdf_slice_min_height, kEsdfSliceMinHeightParamDesc.default_value,
+              kEsdfSliceMinHeightParamDesc.help_string);
+
+DEFINE_double(esdf_slice_max_height, kEsdfSliceMaxHeightParamDesc.default_value,
+              kEsdfSliceMaxHeightParamDesc.help_string);
+
+DEFINE_double(esdf_slice_height, kEsdfSliceHeightParamDesc.default_value,
+              kEsdfSliceHeightParamDesc.help_string);
 
 // ======= PROJECTIVE INTEGRATOR (TSDF/COLOR/OCCUPANCY) =======
-// max integration distance
-DEFINE_double(projective_integrator_max_integration_distance_m, -1.0,
-              "Maximum distance (in meters) from the camera at which to "
-              "integrate data into the TSDF or occupancy grid.");
-// truncation distance
-DEFINE_double(projective_integrator_truncation_distance_vox, -1.0,
-              "Truncation band (in voxels).");
-// weighting
-// NOTE(alexmillane): Only one of these should be true at once (we'll check for
-// that). By default all are false and we use the internal defaults.
-DEFINE_bool(weighting_scheme_constant, false,
-            "Integration weighting scheme: constant");
-DEFINE_bool(weighting_scheme_constant_dropoff, false,
-            "Integration weighting scheme: constant + dropoff");
-DEFINE_bool(weighting_scheme_inverse_square, false,
-            "Integration weighting scheme: square");
-DEFINE_bool(weighting_scheme_inverse_square_dropoff, false,
-            "Integration weighting scheme: square + dropoff");
-// max weight
 DEFINE_double(
-    projective_integrator_max_weight, -1.0,
-    "The maximum weight that a voxel can accumulate through integration.");
+    projective_integrator_max_integration_distance_m,
+    kProjectiveIntegratorMaxIntegrationDistanceMParamDesc.default_value,
+    kProjectiveIntegratorMaxIntegrationDistanceMParamDesc.help_string);
+
+DEFINE_double(projective_integrator_truncation_distance_vox,
+              kProjectiveIntegratorTruncationDistanceVoxParamDesc.default_value,
+              kProjectiveIntegratorTruncationDistanceVoxParamDesc.help_string);
+
+DEFINE_double(projective_integrator_max_weight,
+              kProjectiveIntegratorMaxWeightParamDesc.default_value,
+              kProjectiveIntegratorMaxWeightParamDesc.help_string);
+
+DEFINE_int32(
+    projective_integrator_weighting_mode,
+    static_cast<int>(kProjectiveIntegratorWeightingModeParamDesc.default_value),
+    kProjectiveIntegratorWeightingModeParamDesc.help_string);
 
 // ======= OCCUPANCY INTEGRATOR =======
-DEFINE_double(free_region_occupancy_probability, -1.0,
-              "The inverse sensor model occupancy probability for voxels "
-              "observed as free space.");
-DEFINE_double(occupied_region_occupancy_probability, -1.0,
-              "The inverse sensor model occupancy probability for voxels "
-              "observed as occupied.");
-DEFINE_double(
-    unobserved_region_occupancy_probability, -1.0,
-    "The inverse sensor model occupancy probability for unobserved voxels.");
-DEFINE_double(occupied_region_half_width_m, -1.0,
-              "Half the width of the region which is considered as occupied.");
+DEFINE_double(free_region_occupancy_probability,
+              kFreeRegionOccupancyProbabilityParamDesc.default_value,
+              kFreeRegionOccupancyProbabilityParamDesc.help_string);
+
+DEFINE_double(occupied_region_occupancy_probability,
+              kOccupiedRegionOccupancyProbabilityParamDesc.default_value,
+              kOccupiedRegionOccupancyProbabilityParamDesc.help_string);
+
+DEFINE_double(unobserved_region_occupancy_probability,
+              kUnobservedRegionOccupancyProbabilityParamDesc.default_value,
+              kUnobservedRegionOccupancyProbabilityParamDesc.help_string);
+
+DEFINE_double(occupied_region_half_width_m,
+              kOccupiedRegionHalfWidthMParamDesc.default_value,
+              kOccupiedRegionHalfWidthMParamDesc.help_string);
 
 // ======= ESDF INTEGRATOR =======
-DEFINE_double(esdf_integrator_max_distance_m, -1.0,
-              "The maximum distance which we integrate ESDF distances out to.");
-DEFINE_double(esdf_integrator_min_weight, -1.0,
-              "The minimum weight at which to consider a voxel a site.");
-DEFINE_double(esdf_integrator_max_site_distance_vox, -1.0,
-              "The maximum distance at which we consider a TSDF voxel a site.");
+DEFINE_double(esdf_integrator_max_distance_m,
+              kEsdfIntegratorMaxDistanceMParamDesc.default_value,
+              kEsdfIntegratorMaxDistanceMParamDesc.help_string);
+
+DEFINE_double(esdf_integrator_min_weight,
+              kEsdfIntegratorMinWeightParamDesc.default_value,
+              kEsdfIntegratorMinWeightParamDesc.help_string);
+
+DEFINE_double(esdf_integrator_max_site_distance_vox,
+              kEsdfIntegratorMaxSiteDistanceVoxParamDesc.default_value,
+              kEsdfIntegratorMaxSiteDistanceVoxParamDesc.help_string);
 
 // ======= MESH INTEGRATOR =======
-DEFINE_double(mesh_integrator_min_weight, -1.0,
-              "The minimum weight a tsdf voxel must have before it is meshed.");
-DEFINE_bool(mesh_integrator_weld_vertices, MeshIntegrator::kDefaultWeldVertices,
-            "Whether or not to weld duplicate vertices in the mesh.");
+DEFINE_double(mesh_integrator_min_weight,
+              kMeshIntegratorMinWeightParamDesc.default_value,
+              kMeshIntegratorMinWeightParamDesc.help_string);
+
+DEFINE_bool(mesh_integrator_weld_vertices,
+            kMeshIntegratorWeldVerticesParamDesc.default_value,
+            kMeshIntegratorWeldVerticesParamDesc.help_string);
 
 // ======= TSDF DECAY INTEGRATOR =======
-DEFINE_double(tsdf_decay_factor, -1.0,
-              "Multiplicative factor used by TsdfDecay to decay the weights");
+DEFINE_double(tsdf_decay_factor, kTsdfDecayFactorParamDesc.default_value,
+              kTsdfDecayFactorParamDesc.help_string);
+
+DEFINE_double(tsdf_decayed_weight_threshold,
+              kTsdfDecayedWeightThresholdDesc.default_value,
+              kTsdfDecayedWeightThresholdDesc.help_string);
+
+DEFINE_bool(tsdf_set_free_distance_on_decayed,
+            kTsdfSetFreeDistanceOnDecayedDesc.default_value,
+            kTsdfSetFreeDistanceOnDecayedDesc.help_string);
+
+DEFINE_double(tsdf_decayed_free_distance_vox,
+              kTsdfDecayedFreeDistanceVoxDesc.default_value,
+              kTsdfDecayedFreeDistanceVoxDesc.help_string);
+
+DEFINE_bool(tsdf_deallocate_decayed_blocks,
+            kDecayIntegratorBaseDeallocateDecayedBlocks.default_value,
+            kDecayIntegratorBaseDeallocateDecayedBlocks.help_string);
 
 // ======= OCCUPANCY DECAY INTEGRATOR =======
-DEFINE_double(free_region_decay_probability, -1.0,
-              "The decay probability that is applied to the free region on "
-              "decay. Must be in `[0.5, 1.0]`.");
-DEFINE_double(occupied_region_decay_probability, -1.0,
-              "The decay probability that is applied to the occupied region on "
-              "decay. Must be in `[0.0, 0.5]`.");
+DEFINE_double(free_region_decay_probability,
+              kFreeRegionDecayProbabilityParamDesc.default_value,
+              kFreeRegionDecayProbabilityParamDesc.help_string);
+
+DEFINE_double(occupied_region_decay_probability,
+              kOccupiedRegionDecayProbabilityParamDesc.default_value,
+              kOccupiedRegionDecayProbabilityParamDesc.help_string);
+
+DEFINE_bool(occupancy_deallocate_decayed_blocks,
+            kDecayIntegratorBaseDeallocateDecayedBlocks.default_value,
+            kDecayIntegratorBaseDeallocateDecayedBlocks.help_string);
 
 // ======= FREESPACE INTEGRATOR =======
-DEFINE_double(max_tsdf_distance_for_occupancy_m, -1.0,
-              "Tsdf distance below which we assume a voxel to be occupied (non "
-              "freespace).");
-DEFINE_int32(max_unobserved_to_keep_consecutive_occupancy_ms, -1,
-             "Maximum duration of no observed occupancy to keep consecutive "
-             "occupancy alive.");
-DEFINE_int32(min_duration_since_occupied_for_freespace_ms, -1,
-             "Minimum duration since last observed occupancy to consider voxel "
-             "as free.");
-DEFINE_int32(min_consecutive_occupancy_duration_for_reset_ms, -1,
-             "Minimum duration of consecutive occupancy to turn a high "
-             "confidence free voxel back to occupied.");
-DEFINE_bool(check_neighborhood, FreespaceIntegrator::kDefaultCheckNeighborhood,
-            "Whether to check the occupancy of the neighboring voxels for the "
-            "high confidence freespace update.");
+DEFINE_double(max_tsdf_distance_for_occupancy_m,
+              kMaxTsdfDistanceForOccupancyMParamDesc.default_value,
+              kMaxTsdfDistanceForOccupancyMParamDesc.help_string);
+
+DEFINE_int64(
+    max_unobserved_to_keep_consecutive_occupancy_ms,
+    static_cast<int64_t>(
+        kMaxUnobservedToKeepConsecutiveOccupancyMsParamDesc.default_value),
+    kMaxUnobservedToKeepConsecutiveOccupancyMsParamDesc.help_string);
+
+DEFINE_int64(
+    min_duration_since_occupied_for_freespace_ms,
+    static_cast<int64_t>(
+        kMinDurationSinceOccupiedForFreespaceMsParamDesc.default_value),
+    kMinDurationSinceOccupiedForFreespaceMsParamDesc.help_string);
+
+DEFINE_int64(
+    min_consecutive_occupancy_duration_for_reset_ms,
+    static_cast<int64_t>(
+        kMinConsecutiveOccupancyDurationForResetMsParamDesc.default_value),
+    kMinConsecutiveOccupancyDurationForResetMsParamDesc.help_string);
+
+DEFINE_bool(check_neighborhood, kCheckNeighborhoodParamDesc.default_value,
+            kCheckNeighborhoodParamDesc.help_string);
 
 // <<<<<<<<<<<<<<<<<<<<<<<<<< GET THE PARAMS >>>>>>>>>>>>>>>>>>>>>>>>>>
 
@@ -132,6 +177,26 @@ inline MapperParams get_mapper_params_from_gflags() {
               << FLAGS_depth_preprocessing_num_dilations;
     params.depth_preprocessing_num_dilations =
         FLAGS_depth_preprocessing_num_dilations;
+  }
+  // 2D esdf slice
+  if (!gflags::GetCommandLineFlagInfoOrDie("esdf_slice_min_height")
+           .is_default) {
+    LOG(INFO) << "Command line parameter found: esdf_slice_min_height = "
+              << FLAGS_esdf_slice_min_height;
+    params.esdf_slice_min_height =
+        static_cast<float>(FLAGS_esdf_slice_min_height);
+  }
+  if (!gflags::GetCommandLineFlagInfoOrDie("esdf_slice_max_height")
+           .is_default) {
+    LOG(INFO) << "Command line parameter found: esdf_slice_max_height = "
+              << FLAGS_esdf_slice_max_height;
+    params.esdf_slice_max_height =
+        static_cast<float>(FLAGS_esdf_slice_max_height);
+  }
+  if (!gflags::GetCommandLineFlagInfoOrDie("esdf_slice_height").is_default) {
+    LOG(INFO) << "Command line parameter found: esdf_slice_height = "
+              << FLAGS_esdf_slice_height;
+    params.esdf_slice_height = static_cast<float>(FLAGS_esdf_slice_height);
   }
 
   // ======= PROJECTIVE INTEGRATOR (TSDF/COLOR/OCCUPANCY) =======
@@ -156,46 +221,16 @@ inline MapperParams get_mapper_params_from_gflags() {
         FLAGS_projective_integrator_truncation_distance_vox;
   }
   // weighting
-  int num_weighting_schemes_requested = 0;
-  if (!gflags::GetCommandLineFlagInfoOrDie("weighting_scheme_constant")
-           .is_default) {
-    LOG(INFO) << "Command line parameter found: weighting_scheme_constant = "
-              << FLAGS_weighting_scheme_constant;
-    params.projective_integrator_weighting_mode =
-        WeightingFunctionType::kConstantWeight;
-    ++num_weighting_schemes_requested;
-  }
-  if (!gflags::GetCommandLineFlagInfoOrDie("weighting_scheme_constant_dropoff")
-           .is_default) {
-    LOG(INFO)
-        << "Command line parameter found: weighting_scheme_constant_dropoff = "
-        << FLAGS_weighting_scheme_constant_dropoff;
-    params.projective_integrator_weighting_mode =
-        WeightingFunctionType::kConstantDropoffWeight;
-    ++num_weighting_schemes_requested;
-  }
-  if (!gflags::GetCommandLineFlagInfoOrDie("weighting_scheme_inverse_square")
-           .is_default) {
-    LOG(INFO)
-        << "Command line parameter found: weighting_scheme_inverse_square = "
-        << FLAGS_weighting_scheme_inverse_square;
-    params.projective_integrator_weighting_mode =
-        WeightingFunctionType::kInverseSquareWeight;
-    ++num_weighting_schemes_requested;
-  }
   if (!gflags::GetCommandLineFlagInfoOrDie(
-           "weighting_scheme_inverse_square_dropoff")
+           "projective_integrator_weighting_mode")
            .is_default) {
-    LOG(INFO) << "Command line parameter found: "
-                 "weighting_scheme_inverse_square_dropoff = "
-              << FLAGS_weighting_scheme_inverse_square_dropoff;
+    LOG(INFO)
+        << "Command line parameter found: projective_integrator_weighting_mode "
+        << FLAGS_projective_integrator_weighting_mode;
     params.projective_integrator_weighting_mode =
-        WeightingFunctionType::kInverseSquareDropoffWeight;
-    ++num_weighting_schemes_requested;
+        static_cast<WeightingFunctionType>(
+            FLAGS_projective_integrator_weighting_mode);
   }
-  CHECK_LT(num_weighting_schemes_requested, 2)
-      << "You requested two or more weighting schemes on the command line. "
-         "Maximum one.";
   // max weight
   if (!gflags::GetCommandLineFlagInfoOrDie("projective_integrator_max_weight")
            .is_default) {
@@ -209,9 +244,9 @@ inline MapperParams get_mapper_params_from_gflags() {
   // ======= OCCUPANCY INTEGRATOR =======
   if (!gflags::GetCommandLineFlagInfoOrDie("free_region_occupancy_probability")
            .is_default) {
-    LOG(INFO)
-        << "Command line parameter found: free_region_occupancy_probability = "
-        << FLAGS_free_region_occupancy_probability;
+    LOG(INFO) << "Command line parameter found: "
+                 "free_region_occupancy_probability = "
+              << FLAGS_free_region_occupancy_probability;
     params.free_region_occupancy_probability =
         FLAGS_free_region_occupancy_probability;
   }
@@ -287,6 +322,37 @@ inline MapperParams get_mapper_params_from_gflags() {
               << FLAGS_tsdf_decay_factor;
     params.tsdf_decay_factor = FLAGS_tsdf_decay_factor;
   }
+  if (!gflags::GetCommandLineFlagInfoOrDie("tsdf_decayed_weight_threshold")
+           .is_default) {
+    LOG(INFO) << "command line parameter found: "
+                 "tsdf_decayed_weight_threshold = "
+              << FLAGS_tsdf_decayed_weight_threshold;
+    params.tsdf_decayed_weight_threshold = FLAGS_tsdf_decayed_weight_threshold;
+  }
+  if (!gflags::GetCommandLineFlagInfoOrDie("tsdf_set_free_distance_on_decayed")
+           .is_default) {
+    LOG(INFO) << "command line parameter found: "
+                 "tsdf_set_free_distance_on_decayed = "
+              << FLAGS_tsdf_set_free_distance_on_decayed;
+    params.tsdf_set_free_distance_on_decayed =
+        FLAGS_tsdf_set_free_distance_on_decayed;
+  }
+  if (!gflags::GetCommandLineFlagInfoOrDie("tsdf_decayed_free_distance_vox")
+           .is_default) {
+    LOG(INFO) << "command line parameter found: "
+                 "tsdf_decayed_free_distance_vox = "
+              << FLAGS_tsdf_decayed_free_distance_vox;
+    params.tsdf_decayed_free_distance_vox =
+        FLAGS_tsdf_decayed_free_distance_vox;
+  }
+  if (!gflags::GetCommandLineFlagInfoOrDie("tsdf_deallocate_decayed_blocks")
+           .is_default) {
+    LOG(INFO) << "command line parameter found: "
+                 "tsdf_deallocate_decayed_blocks = "
+              << FLAGS_tsdf_deallocate_decayed_blocks;
+    params.tsdf_deallocate_decayed_blocks =
+        FLAGS_tsdf_deallocate_decayed_blocks;
+  }
 
   // ======= OCCUPANCY DECAY INTEGRATOR =======
   if (!gflags::GetCommandLineFlagInfoOrDie("free_region_decay_probability")
@@ -303,6 +369,15 @@ inline MapperParams get_mapper_params_from_gflags() {
               << FLAGS_occupied_region_decay_probability;
     params.occupied_region_decay_probability =
         FLAGS_occupied_region_decay_probability;
+  }
+  if (!gflags::GetCommandLineFlagInfoOrDie(
+           "occupancy_deallocate_decayed_blocks")
+           .is_default) {
+    LOG(INFO) << "command line parameter found: "
+                 "occupancy_deallocate_decayed_blocks = "
+              << FLAGS_occupancy_deallocate_decayed_blocks;
+    params.occupancy_deallocate_decayed_blocks =
+        FLAGS_occupancy_deallocate_decayed_blocks;
   }
 
   // ======= FREESPACE INTEGRATOR =======

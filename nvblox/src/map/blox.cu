@@ -24,12 +24,12 @@ namespace nvblox {
 __global__ void setColorBlockGray(ColorBlock* block_device_ptr) {
   ColorVoxel* voxel_ptr =
       &block_device_ptr->voxels[threadIdx.z][threadIdx.y][threadIdx.x];
-  // NOTE(alexmillane): We don't use alpha channel for blocks (yet). So we just
-  // set 0 here.
+  // NOTE(dtingdahl): This is identical to the CPU initialization defined in
+  // voxels.h
   voxel_ptr->color.r = 127;
   voxel_ptr->color.g = 127;
   voxel_ptr->color.b = 127;
-  voxel_ptr->color.a = 0;
+  voxel_ptr->color.a = 255;
   voxel_ptr->weight = 0.0f;
 }
 

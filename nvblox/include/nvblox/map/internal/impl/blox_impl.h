@@ -28,24 +28,32 @@ typename VoxelBlock<VoxelType>::Ptr VoxelBlock<VoxelType>::allocateAsync(
     MemoryType memory_type, const CudaStream& cuda_stream) {
   Ptr voxel_block_ptr =
       make_unified_async<VoxelBlock>(memory_type, cuda_stream);
-  if (memory_type == MemoryType::kDevice) {
-    initOnGPUAsync(voxel_block_ptr.get(), cuda_stream);
-  }
+  initAsync(voxel_block_ptr.get(), memory_type, cuda_stream);
+
   return voxel_block_ptr;
 }
-
 template <typename VoxelType>
-void VoxelBlock<VoxelType>::initOnGPUAsync(VoxelBlock<VoxelType>* block_ptr,
-                                           const CudaStream& cuda_stream) {
-  setBlockBytesZeroOnGPUAsync(block_ptr, cuda_stream);
+void VoxelBlock<VoxelType>::initAsync(VoxelBlock<VoxelType>* block_ptr,
+                                      const MemoryType memory_type,
+                                      const CudaStream& cuda_stream) {
+  if (memory_type == MemoryType::kDevice) {
+    setBlockBytesZeroOnGPUAsync(block_ptr, cuda_stream);
+  } else {
+    *block_ptr = VoxelBlock<VoxelType>();
+  }
 }
 
 // Initialization specialization for ColorVoxel which is initialized to gray
 // with zero weight
 template <>
-inline void VoxelBlock<ColorVoxel>::initOnGPUAsync(
-    VoxelBlock<ColorVoxel>* block_ptr, const CudaStream& cuda_stream) {
-  setColorBlockGrayOnGPUAsync(block_ptr, cuda_stream);
+inline void VoxelBlock<ColorVoxel>::initAsync(VoxelBlock<ColorVoxel>* block_ptr,
+                                              const MemoryType memory_type,
+                                              const CudaStream& cuda_stream) {
+  if (memory_type == MemoryType::kDevice) {
+    setColorBlockGrayOnGPUAsync(block_ptr, cuda_stream);
+  } else {
+    *block_ptr = VoxelBlock<VoxelType>();
+  }
 }
 
 template <typename BlockType>

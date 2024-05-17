@@ -124,6 +124,7 @@ class unified_vector {
   MemoryType memory_type() const { return memory_type_; }
 
   /// Set the entire *memory* of the vector to zero.
+  void setAsync(int val, const CudaStream cuda_stream);
   void setZeroAsync(const CudaStream cuda_stream);
   void setZero();
 

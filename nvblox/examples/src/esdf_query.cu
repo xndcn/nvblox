@@ -71,7 +71,7 @@ void EsdfQueryExample::createMap() {
   // Set the max computed distance to 5 meters.
   mapper_->esdf_integrator().max_esdf_distance_m(5.0f);
   // Generate the ESDF from everything in the TSDF.
-  mapper_->updateFullEsdf();
+  mapper_->updateEsdf(UpdateFullLayer::kYes);
 
   // Output a ply pointcloud of all of the distances to compare the query
   // points to.

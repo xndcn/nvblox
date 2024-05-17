@@ -332,6 +332,12 @@ void SphereTracer::surface_distance_epsilon_vox(
   surface_distance_epsilon_vox_ = surface_distance_epsilon_vox;
 }
 
+SphereTracer::SubsampledImageSize SphereTracer::getSubsampledImageSize(
+    const Camera& camera, const int subsampling_factor) const {
+  return SubsampledImageSize(camera.height() / subsampling_factor,
+                             camera.width() / subsampling_factor);
+}
+
 bool SphereTracer::castOnGPU(const Ray& ray, const TsdfLayer& tsdf_layer,
                              const float truncation_distance_m,
                              float* t) const {
@@ -339,7 +345,8 @@ bool SphereTracer::castOnGPU(const Ray& ray, const TsdfLayer& tsdf_layer,
   CHECK_NEAR(ray.direction().norm(), 1.0, eps);
 
   // Get the GPU hash
-  GPULayerView<TsdfBlock> gpu_layer_view = tsdf_layer.getGpuLayerView();
+  GPULayerView<TsdfBlock> gpu_layer_view =
+      tsdf_layer.getGpuLayerViewAsync(*cuda_stream_);
 
   // Allocate space
   float* t_device;
@@ -392,8 +399,10 @@ void SphereTracer::renderImageOnGPU(const Camera& camera,
   CHECK_EQ(camera.height() % ray_subsampling_factor, 0);
   CHECK(output_image_memory_type != MemoryType::kHost);
   // Output space
-  const int image_height = camera.height() / ray_subsampling_factor;
-  const int image_width = camera.width() / ray_subsampling_factor;
+  const SubsampledImageSize image_size =
+      getSubsampledImageSize(camera, ray_subsampling_factor);
+  const int image_height = image_size.rows;
+  const int image_width = image_size.cols;
 
   // If we get a request for a different size image, reallocate.
   if (depth_ptr->width() != image_width ||
@@ -424,8 +433,10 @@ void SphereTracer::renderImageOnGPU(const Camera& camera,
   CHECK_EQ(camera.height() % ray_subsampling_factor, 0);
   CHECK(output_image_memory_type != MemoryType::kHost);
   // Output space
-  const int image_height = camera.height() / ray_subsampling_factor;
-  const int image_width = camera.width() / ray_subsampling_factor;
+  const SubsampledImageSize image_size =
+      getSubsampledImageSize(camera, ray_subsampling_factor);
+  const int image_height = image_size.rows;
+  const int image_width = image_size.cols;
 
   // We can't allocate in this function so we check that the output is the right
   // size
@@ -440,7 +451,8 @@ void SphereTracer::renderImageOnGPU(const Camera& camera,
   // Get the GPU hash
   timing::Timer hash_transfer_timer(
       "color/integrate/sphere_trace/hash_transfer");
-  GPULayerView<TsdfBlock> gpu_layer_view = tsdf_layer.getGpuLayerView();
+  GPULayerView<TsdfBlock> gpu_layer_view =
+      tsdf_layer.getGpuLayerViewAsync(*cuda_stream_);
   hash_transfer_timer.Stop();
 
   // Get metric surface distance epsilon
@@ -483,8 +495,10 @@ void SphereTracer::renderRgbdImageOnGPU(
   CHECK_EQ(camera.height() % ray_subsampling_factor, 0);
   CHECK(output_image_memory_type != MemoryType::kHost);
   // Output space
-  const int image_height = camera.height() / ray_subsampling_factor;
-  const int image_width = camera.width() / ray_subsampling_factor;
+  const SubsampledImageSize image_size =
+      getSubsampledImageSize(camera, ray_subsampling_factor);
+  const int image_height = image_size.rows;
+  const int image_width = image_size.cols;
 
   // We can't allocate in this function so we check that the output is the right
   // size. If not return
@@ -502,8 +516,10 @@ void SphereTracer::renderRgbdImageOnGPU(
   // Get the GPU hash
   timing::Timer hash_transfer_timer(
       "color/integrate/sphere_trace/hash_transfer");
-  GPULayerView<TsdfBlock> tsdf_gpu_layer_view = tsdf_layer.getGpuLayerView();
-  GPULayerView<ColorBlock> color_gpu_layer_view = color_layer.getGpuLayerView();
+  GPULayerView<TsdfBlock> tsdf_gpu_layer_view =
+      tsdf_layer.getGpuLayerViewAsync(*cuda_stream_);
+  GPULayerView<ColorBlock> color_gpu_layer_view =
+      color_layer.getGpuLayerViewAsync(*cuda_stream_);
   hash_transfer_timer.Stop();
 
   // Get metric surface distance epsilon
@@ -549,8 +565,10 @@ void SphereTracer::renderRgbdImageOnGPU(
   CHECK_EQ(camera.height() % ray_subsampling_factor, 0);
   CHECK(output_image_memory_type != MemoryType::kHost);
   // Output space
-  const int image_height = camera.height() / ray_subsampling_factor;
-  const int image_width = camera.width() / ray_subsampling_factor;
+  const SubsampledImageSize image_size =
+      getSubsampledImageSize(camera, ray_subsampling_factor);
+  const int image_height = image_size.rows;
+  const int image_width = image_size.cols;
 
   // If we get a request for a different size image, reallocate.
   if (depth_ptr->width() != image_width ||
@@ -591,7 +609,8 @@ std::pair<device_vector<Vector3f>, device_vector<bool>> SphereTracer::castOnGPU(
   // Get the GPU hash
   timing::Timer hash_transfer_timer(
       "color/integrate/sphere_trace/hash_transfer");
-  GPULayerView<TsdfBlock> gpu_layer_view = tsdf_layer.getGpuLayerView();
+  GPULayerView<TsdfBlock> gpu_layer_view =
+      tsdf_layer.getGpuLayerViewAsync(*cuda_stream_);
   hash_transfer_timer.Stop();
 
   // Get metric surface distance epsilon

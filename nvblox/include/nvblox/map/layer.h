@@ -26,6 +26,7 @@ limitations under the License.
 #include "nvblox/core/unified_vector.h"
 #include "nvblox/gpu_hash/gpu_layer_view.h"
 #include "nvblox/map/blox.h"
+#include "nvblox/map/internal/block_memory_pool.h"
 
 namespace nvblox {
 
@@ -66,6 +67,7 @@ class BlockLayer : public BaseLayer {
   BlockLayer(float block_size, MemoryType memory_type)
       : block_size_(block_size),
         memory_type_(memory_type),
+        memory_pool_(memory_type),
         gpu_layer_view_up_to_date_(false) {}
   virtual ~BlockLayer() {}
 
@@ -105,7 +107,7 @@ class BlockLayer : public BaseLayer {
 
   /// Get block indices for which the provided predicate evaluates to true
   std::vector<Index3D> getBlockIndicesIf(
-      std::function<bool(const Index3D&)> predicate);
+      std::function<bool(const Index3D&)> predicate) const;
 
   /// Check if allocated
   bool isBlockAllocated(const Index3D& index) const;
@@ -115,7 +117,7 @@ class BlockLayer : public BaseLayer {
   size_t size() const { return blocks_.size(); }
 
   /// Clear the layer of all data
-  void clear() { blocks_.clear(); }
+  void clear();
 
   // Clear (deallocate) a single block
   bool clearBlock(const Index3D& index);
@@ -130,6 +132,7 @@ class BlockLayer : public BaseLayer {
   /// GPU Hash
   /// Note(alexmillane): The hash returned here is invalidated by calls to
   /// allocateBlock
+  GPULayerViewType getGpuLayerViewAsync(const CudaStream& cuda_stream) const;
   GPULayerViewType getGpuLayerView() const;
 
  protected:
@@ -138,6 +141,12 @@ class BlockLayer : public BaseLayer {
 
   /// CPU Hash (Index3D -> BlockType::Ptr)
   BlockHash blocks_;
+
+  /// Memory pool that stores preallocated blocks.
+  /// NOTE(dtingdahl): The memory pool works together with the BlockHash and
+  /// should ideally be more tightly copupled to it by e.g. storing them in a
+  /// common class or making an allocator out of the memory pool.
+  BlockMemoryPool<BlockType> memory_pool_;
 
   /// GPU Hash
   /// NOTE(alexmillane):
@@ -153,12 +162,13 @@ class BlockLayer : public BaseLayer {
 
 /// Specialization for BlockLayer that exclusively contains VoxelBlocks to make
 /// access easier.
-template <typename VoxelType>
-class VoxelBlockLayer : public BlockLayer<VoxelBlock<VoxelType>> {
+template <typename _VoxelType>
+class VoxelBlockLayer : public BlockLayer<VoxelBlock<_VoxelType>> {
  public:
   typedef std::shared_ptr<VoxelBlockLayer> Ptr;
   typedef std::shared_ptr<const VoxelBlockLayer> ConstPtr;
 
+  using VoxelType = _VoxelType;
   using Base = BlockLayer<VoxelBlock<VoxelType>>;
 
   using VoxelBlockType = VoxelBlock<VoxelType>;

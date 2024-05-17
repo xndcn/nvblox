@@ -19,7 +19,7 @@ limitations under the License.
 
 #include "nvblox/nvblox.h"
 
-#include "nvblox/serialization/internal/layer_type_register.h"
+#include "nvblox/map_saving/internal/layer_type_register.h"
 
 using namespace nvblox;
 

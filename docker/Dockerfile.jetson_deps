@@ -1,18 +1,26 @@
-FROM nvcr.io/nvidia/l4t-jetpack:r35.2.1
+ARG BASE_IMAGE=nvcr.io/nvidia/l4t-jetpack:r36.2.0
+
+FROM $BASE_IMAGE
 
 # TZData goes first.
 RUN apt-get update
 ENV TZ Europe/Berlin
 ENV DEBIAN_FRONTEND noninteractive
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-RUN apt-get install -y tzdata
+RUN apt-get update && apt-get install -y tzdata
 
 # Install basics.
-RUN apt-get update
-RUN apt-get install -y ssh git jq gnupg apt-utils software-properties-common build-essential
+RUN apt-get update && apt-get install -y ssh git jq gnupg apt-utils software-properties-common build-essential python3-pip sudo
 
 # Install dependencies.
-RUN apt-get install -y libgoogle-glog-dev libgtest-dev libbenchmark-dev curl libsqlite3-dev
+RUN apt-get update && apt-get install -y libgoogle-glog-dev libgtest-dev libbenchmark-dev curl libsqlite3-dev
+
+# Update pip
+RUN python3 -m pip install --no-cache-dir --upgrade pip
+
+# Install libssl1.1. Needed for cmake.
+RUN wget http://ports.ubuntu.com/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2_arm64.deb \
+    && sudo dpkg -i libssl1.1_1.1.1f-1ubuntu2_arm64.deb
 
 # Upgrade cmake to 3.23.2
 # We need this to build with c++17 under CMAKE.
