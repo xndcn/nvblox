@@ -42,8 +42,8 @@ struct VoxelBlock {
   static Ptr allocate(MemoryType memory_type);
   /// Initializes all the memory of the voxels to 0 by default, can be
   /// specialized by voxel type.
-  static void initOnGPUAsync(VoxelBlock* block_ptr,
-                             const CudaStream& cuda_stream);
+  static void initAsync(VoxelBlock* block_ptr, const MemoryType memory_type,
+                        const CudaStream& cuda_stream);
 };
 
 // Initialization Utility Functions

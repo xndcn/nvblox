@@ -36,6 +36,10 @@ struct IndexBlock {
   static Ptr allocateAsync(MemoryType memory_type, const CudaStream&) {
     return make_unified<IndexBlock>(memory_type);
   }
+
+  /// Note(dtingdahl): Required to comply with common block interface. does
+  /// nothing.
+  static void initAsync(IndexBlock*, const MemoryType, const CudaStream&) {}
 };
 
 // Dummy block that stores a single bool
@@ -52,6 +56,10 @@ struct BooleanBlock {
   static Ptr allocateAsync(MemoryType memory_type, const CudaStream&) {
     return make_unified<BooleanBlock>(memory_type);
   }
+
+  /// Note(dtingdahl): Required to comply with common block interface. does
+  /// nothing.
+  static void initAsync(BooleanBlock*, const MemoryType, const CudaStream&) {}
 };
 
 struct FloatBlock {
@@ -65,6 +73,10 @@ struct FloatBlock {
   static Ptr allocateAsync(MemoryType memory_type, const CudaStream&) {
     return make_unified<FloatBlock>(memory_type);
   };
+
+  /// Note(dtingdahl): Required to comply with common block interface. does
+  /// nothing.
+  static void initAsync(FloatBlock*, const MemoryType, const CudaStream&) {}
 
   float block_data = 0.0f;
 };
@@ -90,8 +102,8 @@ struct InitializationTestVoxel {
 };
 
 template <>
-inline void VoxelBlock<InitializationTestVoxel>::initOnGPUAsync(
-    VoxelBlock<InitializationTestVoxel>* voxel_block_ptr,
+inline void VoxelBlock<InitializationTestVoxel>::initAsync(
+    VoxelBlock<InitializationTestVoxel>* voxel_block_ptr, const MemoryType,
     const CudaStream& cuda_stream) {
   setBlockBytesConstantOnGPUAsync(
       InitializationTestVoxel::kGPUInitializationValue, voxel_block_ptr,

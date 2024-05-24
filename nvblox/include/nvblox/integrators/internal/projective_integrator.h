@@ -18,13 +18,13 @@ limitations under the License.
 #include "nvblox/core/cuda_stream.h"
 #include "nvblox/core/parameter_tree.h"
 #include "nvblox/gpu_hash/gpu_layer_view.h"
+#include "nvblox/integrators/projective_integrator_params.h"
 #include "nvblox/integrators/view_calculator.h"
 #include "nvblox/integrators/weighting_function.h"
 #include "nvblox/map/common_names.h"
 #include "nvblox/sensors/camera.h"
 #include "nvblox/sensors/image.h"
 #include "nvblox/sensors/lidar.h"
-
 namespace nvblox {
 
 /// A pure-virtual base-class for the projective occupancy and tsdf integrators.
@@ -37,14 +37,6 @@ namespace nvblox {
 template <typename VoxelType>
 class ProjectiveIntegrator {
  public:
-  static constexpr float kDefaultMaxIntegrationDistanceM = 7.0;
-  // Note(remos): per default the non lidar max integration distance is set
-  static constexpr float kDefaultLidarMaxIntegrationDistance = 10.0;
-  static constexpr float kDefaultTruncationDistanceVox = 4.0;
-  static constexpr WeightingFunctionType kDefaultWeightingFunctionType =
-      WeightingFunctionType::kInverseSquareWeight;
-  static constexpr float kDefaultMaxWeight = 5.0;
-
   ProjectiveIntegrator();
   ProjectiveIntegrator(std::shared_ptr<CudaStream> cuda_stream);
   virtual ~ProjectiveIntegrator() = default;
@@ -175,8 +167,10 @@ class ProjectiveIntegrator {
   // NOTE(alexmillane): See the getters above for a description.
   float lidar_linear_interpolation_max_allowable_difference_vox_ = 2.0f;
   float lidar_nearest_interpolation_max_allowable_dist_to_ray_vox_ = 0.5f;
-  float truncation_distance_vox_ = kDefaultTruncationDistanceVox;
-  float max_integration_distance_m_ = kDefaultMaxIntegrationDistanceM;
+  float truncation_distance_vox_ =
+      kProjectiveIntegratorTruncationDistanceVoxParamDesc.default_value;
+  float max_integration_distance_m_ =
+      kProjectiveIntegratorMaxIntegrationDistanceMParamDesc.default_value;
 
   // Frustum calculation.
   mutable ViewCalculator view_calculator_;

@@ -36,7 +36,7 @@ std::vector<Index3D> get3x3CubeOfBlocks() {
 
 bool isInResult(const std::vector<Index3D>& result_vec,
                 const Index3D& expected_result) {
-  for (const Index3D idx : result_vec) {
+  for (const Index3D& idx : result_vec) {
     if ((idx.array() == expected_result.array()).all()) {
       return true;
     }
@@ -46,7 +46,7 @@ bool isInResult(const std::vector<Index3D>& result_vec,
 
 bool isNotInResult(const std::vector<Index3D>& result_vec,
                    const Index3D& expected_non_result) {
-  for (const Index3D idx : result_vec) {
+  for (const Index3D& idx : result_vec) {
     if ((idx.array() == expected_non_result.array()).all()) {
       return false;
     }

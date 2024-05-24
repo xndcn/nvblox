@@ -18,6 +18,7 @@ limitations under the License.
 
 #include "nvblox/sensors/connected_components.h"
 #include "nvblox/sensors/npp_image_operations.h"
+#include "nvblox/utils/timing.h"
 
 namespace nvblox {
 namespace image {
@@ -112,6 +113,9 @@ void removeSmallConnectedComponents(const MonoImage& mask,
                                     const int size_threshold,
                                     MonoImage* mask_out,
                                     const CudaStream cuda_stream) {
+  timing::Timer remove_small_connected_components_timer(
+      "image/remove_small_connected_components");
+
   if (size_threshold <= 0) {
     // Keep all masked pixels.
     mask_out->copyFrom(mask);
@@ -122,6 +126,7 @@ void removeSmallConnectedComponents(const MonoImage& mask,
   CHECK_GT(mask.cols(), 0);
   if ((mask.rows() != mask_out->rows()) || (mask.cols() != mask_out->cols())) {
     // Keep the memory type to allow moving between device/host
+    LOG(INFO) << "Allocating MonoImage for connected components";
     *mask_out = MonoImage(mask.rows(), mask.cols(), mask_out->memory_type());
   }
 
@@ -143,6 +148,8 @@ void removeSmallConnectedComponents(const MonoImage& mask,
 
   // Iterate over all pixels until we find an unvisited one where the mask is
   // active. That's the beginning of a new connected component
+  timing::Timer explore_component_loop_timer(
+      "image/remove_small_connected_components/explore_component_loop");
   for (int row = 0; row < mask.rows(); ++row) {
     for (int col = 0; col < mask.cols(); ++col) {
       if (mask_host(row, col) &&
@@ -159,6 +166,7 @@ void removeSmallConnectedComponents(const MonoImage& mask,
       }
     }
   }
+  explore_component_loop_timer.Stop();
 
   // copy to output
   mask_out->copyFrom(mask_host);

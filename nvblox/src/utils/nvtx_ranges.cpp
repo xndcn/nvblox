@@ -71,6 +71,7 @@ void NvtxRange::Init(const std::string& message, const Color& color) {
 }
 
 void NvtxRange::Init(const std::string& message, const uint32_t color) {
+  tag_ = message;
   // Initialize
   event_attributes_ = nvtxEventAttributes_t{};
   event_attributes_.version = NVTX_VERSION;
@@ -79,7 +80,7 @@ void NvtxRange::Init(const std::string& message, const uint32_t color) {
   event_attributes_.colorType = NVTX_COLOR_ARGB;
   event_attributes_.color = color;
   event_attributes_.messageType = NVTX_MESSAGE_TYPE_ASCII;
-  event_attributes_.message.ascii = message.c_str();
+  event_attributes_.message.ascii = tag_.c_str();
 }
 
 void mark(const std::string& message, const uint32_t color) {

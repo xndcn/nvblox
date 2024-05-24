@@ -472,7 +472,7 @@ std::vector<Index3D> ViewCalculator::getBlocksInImageViewPlanes(
     const float max_integration_distance_m) {
   timing::Timer("view_calculator/get_blocks_in_image_view_planes");
   float min_depth, max_depth;
-  std::tie(min_depth, max_depth) = image::minmaxGPU(depth_frame);
+  std::tie(min_depth, max_depth) = image::minmaxGPU(depth_frame, *cuda_stream_);
   float max_depth_plus_trunc = max_depth + truncation_distance_m;
   if (max_integration_distance_m > 0.0f) {
     max_depth_plus_trunc =

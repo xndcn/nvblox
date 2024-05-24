@@ -26,6 +26,7 @@ limitations under the License.
 #include "nvblox/core/unified_vector.h"
 #include "nvblox/gpu_hash/gpu_layer_view.h"
 #include "nvblox/map/blox.h"
+#include "nvblox/map/internal/block_memory_pool.h"
 
 namespace nvblox {
 
@@ -60,14 +61,21 @@ class BlockLayer : public BaseLayer {
   typedef BlockLayer<BlockType> LayerType;
   typedef GPULayerView<BlockType> GPULayerViewType;
 
+  /// The type of the CPU hash map from Index3D to BlockType::Ptr.
   typedef typename Index3DHashMapType<typename BlockType::Ptr>::type BlockHash;
 
+  /// No default constructor.
   BlockLayer() = delete;
+
+  /// Constructor
+  /// @param block_size The side-length in meters of a block.
+  /// @param memory_type Where the blocks are allocated and stored.
   BlockLayer(float block_size, MemoryType memory_type)
       : block_size_(block_size),
         memory_type_(memory_type),
+        memory_pool_(memory_type),
         gpu_layer_view_up_to_date_(false) {}
-  virtual ~BlockLayer() {}
+  virtual ~BlockLayer() = default;
 
   /// Use copyFrom() instead of copy constructors
   BlockLayer(const BlockLayer& other) = delete;
@@ -78,11 +86,18 @@ class BlockLayer : public BaseLayer {
   BlockLayer(BlockLayer&& other) = default;
   BlockLayer& operator=(BlockLayer&& other) = default;
 
-  /// Deep copies, with optionally changing the memory type.
+  /// Replace this Layer's data with a copy of data from another.
+  /// If this and other's memory types differ, the memory becomes the MemoryType
+  /// of *this.
+  /// @param other The layer containing the copied-from data
   void copyFrom(const BlockLayer& other);
+  /// See copyFrom(). Copy is performed on a stream.
+  /// @param other The layer containing the copied-from data
   void copyFromAsync(const BlockLayer& other, const CudaStream cuda_stream);
 
-  /// Block accessors by index.
+  /// Get a block by it's 3D index.
+  /// @param index The 3D index of the block
+  /// @return A pointer to the block.
   typename BlockType::Ptr getBlockAtIndex(const Index3D& index);
   typename BlockType::ConstPtr getBlockAtIndex(const Index3D& index) const;
   typename BlockType::Ptr allocateBlockAtIndex(const Index3D& index);
@@ -91,7 +106,10 @@ class BlockLayer : public BaseLayer {
   void allocateBlocksAtIndices(const std::vector<Index3D>& indices,
                                const CudaStream& cuda_stream);
 
-  /// Block accessors by position.
+  /// Get a block by 3D position. The function returns the block containing the
+  /// passed location.
+  /// @param index A 3D point which the returned block should contain.
+  /// @return A pointer to the block.
   typename BlockType::Ptr getBlockAtPosition(const Vector3f& position);
   typename BlockType::ConstPtr getBlockAtPosition(
       const Vector3f& position) const;
@@ -99,49 +117,87 @@ class BlockLayer : public BaseLayer {
       const Vector3f& position, const CudaStream& cuda_stream);
   typename BlockType::Ptr allocateBlockAtPosition(const Vector3f& position);
 
-  /// Get all blocks indices or pointers.
+  /// Get the 3D indices of all allocated blocks.
+  /// @return The indices.
   std::vector<Index3D> getAllBlockIndices() const;
+  /// Get the pointers to all allocated blocks
+  /// @return The pointers.
   std::vector<BlockType*> getAllBlockPointers();
 
   /// Get block indices for which the provided predicate evaluates to true
+  /// @param predicate A function taking an index and returning a flag
+  /// indicating if the block should be returned.
+  /// @return The indices of allocated blocks for which predicate returned true.
   std::vector<Index3D> getBlockIndicesIf(
-      std::function<bool(const Index3D&)> predicate);
+      std::function<bool(const Index3D&)> predicate) const;
 
-  /// Check if allocated
+  /// Check if a block is allocated.
+  /// @param index The 3D grid index.
+  /// @return True if a block has been allocated at the index.
   bool isBlockAllocated(const Index3D& index) const;
 
+  /// Get side-length in meters of a block.
+  /// @return The size.
   __host__ __device__ float block_size() const { return block_size_; }
+
+  /// Get the number of allocated blocks
+  /// @return The total number of allocated blocks.
   int numAllocatedBlocks() const { return blocks_.size(); }
+
+  /// Get the number of allocated blocks
+  /// @return The total number of allocated blocks.
   size_t size() const { return blocks_.size(); }
 
-  /// Clear the layer of all data
-  void clear() { blocks_.clear(); }
+  /// Clear the layer of all data. Deallocate all blocks.
+  void clear();
 
-  // Clear (deallocate) a single block
+  /// Clear (deallocate) a single block. Does nothing if the block is not in the
+  /// map.
+  /// @param index The 3D index of the block to delete.
+  /// @return True if the block was in the map and was deallocated.
   bool clearBlock(const Index3D& index);
 
   /// Clear (deallocate) blocks passed in
   /// Note if a block does not exist, this function just (silently)
   /// continues trying the rest of the list.
+  /// @param indices A list of block indices to delete.
   void clearBlocks(const std::vector<Index3D>& indices);
 
+  /// The memory type of the blocks stored in the Layer.
+  /// @return The memory type.
   MemoryType memory_type() const { return memory_type_; }
 
-  /// GPU Hash
-  /// Note(alexmillane): The hash returned here is invalidated by calls to
-  /// allocateBlock
+  /// Return a GPULayerView which can be used to access the layer data on the
+  /// GPU. For more details see \ref GPULayerView.
+  /// Note that this call may trigger a copy of the CPU hash to the GPU. Also
+  /// note that the returned object is only valid until the next call to
+  /// allocateBlock.
+  /// @param cuda_stream The stream on which to perform the CPU to GPU copy of
+  /// the hash map.
+  /// @return The GPULayerView.
+  GPULayerViewType getGpuLayerViewAsync(const CudaStream& cuda_stream) const;
+  /// See \ref getGpuLayerViewAsync
   GPULayerViewType getGpuLayerView() const;
 
  protected:
+  /// The side length in meters of a block.
   float block_size_;
+
+  /// The type of memory used to store block data.
   MemoryType memory_type_;
 
   /// CPU Hash (Index3D -> BlockType::Ptr)
   BlockHash blocks_;
 
+  /// Memory pool that stores preallocated blocks.
+  /// NOTE(dtingdahl): The memory pool works together with the BlockHash and
+  /// should ideally be more tightly copupled to it by e.g. storing them in a
+  /// common class or making an allocator out of the memory pool.
+  BlockMemoryPool<BlockType> memory_pool_;
+
   /// GPU Hash
   /// NOTE(alexmillane):
-  /// - This has is subservient to the CPU version. The layer has to copy the
+  /// - This is subservient to the CPU version. The layer has to copy the
   ///   hash to GPU when it is requested.
   /// - Cached such that if no blocks are allocated between requests, the
   ///   GPULayerView is not recopied.
@@ -153,12 +209,13 @@ class BlockLayer : public BaseLayer {
 
 /// Specialization for BlockLayer that exclusively contains VoxelBlocks to make
 /// access easier.
-template <typename VoxelType>
-class VoxelBlockLayer : public BlockLayer<VoxelBlock<VoxelType>> {
+template <typename _VoxelType>
+class VoxelBlockLayer : public BlockLayer<VoxelBlock<_VoxelType>> {
  public:
   typedef std::shared_ptr<VoxelBlockLayer> Ptr;
   typedef std::shared_ptr<const VoxelBlockLayer> ConstPtr;
 
+  using VoxelType = _VoxelType;
   using Base = BlockLayer<VoxelBlock<VoxelType>>;
 
   using VoxelBlockType = VoxelBlock<VoxelType>;
@@ -172,7 +229,7 @@ class VoxelBlockLayer : public BlockLayer<VoxelBlock<VoxelType>> {
                                    memory_type),
         voxel_size_(voxel_size) {}
   VoxelBlockLayer() = delete;
-  virtual ~VoxelBlockLayer() {}
+  virtual ~VoxelBlockLayer() = default;
 
   /// Deep copies
   VoxelBlockLayer(const VoxelBlockLayer& other);
@@ -201,8 +258,8 @@ class VoxelBlockLayer : public BlockLayer<VoxelBlock<VoxelType>> {
                  std::vector<VoxelType>* voxels_ptr,
                  std::vector<bool>* success_flags_ptr) const;
 
-  /// Gets voxels by copy from a list of positions.
-  /// See getVoxels() above. This stream performs the same functionality
+  /// Gets voxels by copy from a list of positions. See \ref getVoxels.
+  /// This method performs the same functionality
   /// except that the copy is performed on a specific CUDA stream.
   void getVoxels(const std::vector<Vector3f>& positions_L,
                  std::vector<VoxelType>* voxels_ptr,
@@ -220,8 +277,8 @@ class VoxelBlockLayer : public BlockLayer<VoxelBlock<VoxelType>> {
                     device_vector<VoxelType>* voxels_ptr,
                     device_vector<bool>* success_flags_ptr) const;
 
-  /// Gets voxels by copy from a list of positions.
-  /// See getVoxelsGPU(). This stream performs the same functionality
+  /// Gets voxels by copy from a list of positions. See \ref getVoxelsGPU.
+  /// This stream performs the same functionality
   /// except that the copy is performed on a specific CUDA stream.
   void getVoxelsGPU(const device_vector<Vector3f>& positions_L,
                     device_vector<VoxelType>* voxels_ptr,

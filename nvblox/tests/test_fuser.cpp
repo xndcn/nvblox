@@ -48,7 +48,15 @@ TEST(FuserTest, CommandLineFlags) {
       (char*)"--esdf_integrator_min_weight=16.0",
       (char*)"--esdf_integrator_max_site_distance_vox=17.0",
       (char*)"--esdf_integrator_max_distance_m=18.0",
-      (char*)"--weighting_scheme_constant_dropoff=true",
+      (char*)"--projective_integrator_weighting_mode=1",
+      (char*)"--tsdf_decay_factor=0.19",
+      (char*)"--tsdf_decayed_weight_threshold=20.0",
+      (char*)"--tsdf_set_free_distance_on_decayed=1",
+      (char*)"--tsdf_decayed_free_distance_vox=21.0",
+      (char*)"--tsdf_deallocate_decayed_blocks=0",
+      (char*)"--free_region_decay_probability=0.522",
+      (char*)"--occupied_region_decay_probability=0.23",
+      (char*)"--occupancy_deallocate_decayed_blocks=0",
       NULL,
   };
   int argc = (sizeof(argv) / sizeof(*(argv))) - 1;
@@ -138,6 +146,35 @@ TEST(FuserTest, CommandLineFlags) {
             WeightingFunctionType::kConstantDropoffWeight);
   EXPECT_EQ(fuser->static_mapper().color_integrator().weighting_function_type(),
             WeightingFunctionType::kConstantDropoffWeight);
+
+  // TSDF decay integrator
+  EXPECT_NEAR(fuser->static_mapper().tsdf_decay_integrator().decay_factor(),
+              0.19f, kEps);
+  EXPECT_NEAR(
+      fuser->static_mapper().tsdf_decay_integrator().decayed_weight_threshold(),
+      20.0, kEps);
+  EXPECT_TRUE(fuser->static_mapper()
+                  .tsdf_decay_integrator()
+                  .set_free_distance_on_decayed());
+  EXPECT_NEAR(
+      fuser->static_mapper().tsdf_decay_integrator().free_distance_vox(), 21.0,
+      kEps);
+  EXPECT_FALSE(fuser->static_mapper()
+                   .tsdf_decay_integrator()
+                   .deallocate_decayed_blocks());
+
+  // Occupancy Decay integrator
+  EXPECT_NEAR(fuser->static_mapper()
+                  .occupancy_decay_integrator()
+                  .free_region_decay_probability(),
+              0.522, kEps);
+  EXPECT_NEAR(fuser->static_mapper()
+                  .occupancy_decay_integrator()
+                  .occupied_region_decay_probability(),
+              0.23, kEps);
+  EXPECT_FALSE(fuser->static_mapper()
+                   .occupancy_decay_integrator()
+                   .deallocate_decayed_blocks());
 }
 
 int main(int argc, char** argv) {

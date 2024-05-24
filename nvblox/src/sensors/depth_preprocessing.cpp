@@ -27,6 +27,7 @@ void reallocateImageToSameSizeIfRequired(const InputImageType& input,
                                          OutputImageType* output) {
   CHECK_NOTNULL(output);
   if (input.rows() != output->rows() || input.cols() != output->cols()) {
+    LOG(INFO) << "Allocating space for image preprocessing";
     *output =
         OutputImageType(input.rows(), input.cols(), output->memory_type());
   }

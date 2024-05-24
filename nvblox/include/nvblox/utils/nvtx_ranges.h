@@ -45,6 +45,7 @@ class NvtxRange {
   void Init(const std::string& message, const Color& color);
   void Init(const std::string& message, const uint32_t color);
 
+  std::string tag_;
   bool started_;
   nvtxEventAttributes_t event_attributes_;
   nvtxRangeId_t id_;

@@ -43,7 +43,7 @@ Build nvblox with the paths set to where you've unzipped and built the dependenc
 cd nvblox/
 mkdir build install
 cmake .. -DCMAKE_INSTALL_PREFIX=/home/helen/code/nvblox/nvblox/install/ \
--DBUILD_FOR_ALL_ARCHS=TRUE -DBUILD_REDISTRIBUTABLE=TRUE \
+'-DCMAKE_CUDA_ARCHITECTURES=<comma-separated-list-of-cuda-archs>' -DBUILD_REDISTRIBUTABLE=TRUE \
 -DSQLITE3_BASE_PATH="/home/USERNAME/code/external/sqlite-autoconf-3390400/install/" \ 
 -DGLOG_BASE_PATH="/home/USERNAME/code/external/glog-0.4.0/install/" \
 -DGFLAGS_BASE_PATH="/home/USERNAME/code/external/gflags-2.2.2/install/" \

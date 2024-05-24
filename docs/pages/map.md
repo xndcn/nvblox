@@ -1,7 +1,8 @@
 # Map Overview
 We implement a hierarchical sparse voxel grid for storing data. At the top level we have the ``LayerCake``, which contains several layers, each of which contains a different type of mapped quantity (eg TSDF and ESDF). A layer is a collection of sparsely allocated blocks. Each block is in charge of mapping a cubular small region of space. Most blocks are composed of many voxels, each of which captures a single value of the mapped quantity (eg the TSDF).
 
-![Map Structure](images/map_structure.png)
+<img src="map_structure.png" alt="Map Structure" width="400">
+
 
 The API for the various classes implementing a map nvblox map:
 
@@ -10,6 +11,8 @@ The API for the various classes implementing a map nvblox map:
 * [TsdfVoxel](@ref nvblox::TsdfVoxel)
 * [EsdfVoxel](@ref nvblox::EsdfVoxel)
 * [ColorVoxel](@ref nvblox::ColorVoxel)
+* [OccupancyVoxel](@ref nvblox::OccupancyVoxel)
+* [FreespaceVoxel](@ref nvblox::FreespaceVoxel)
 
 ## Blocks
 
@@ -22,6 +25,8 @@ Blocks containing specific voxel types. These are just typedefs of the above vox
 * [TsdfBlock](@ref nvblox::TsdfBlock)
 * [Esdflock](@ref nvblox::TsdfBlock)
 * [ColorBlock](@ref nvblox::TsdfBlock)
+* [OccupancyBlock](@ref nvblox::OccupancyBlock)
+* [FreespaceBlock](@ref nvblox::FreespaceBlock)
 
 We store the mesh of the environment as a collection of smaller meshes. In particular, a ``MeshLayer`` contains ``MeshBlocks``, each of which contains a mesh of the surfaces in that region contained within that block. Note that we store a mesh per *block*, there are no mesh *voxels*.
 Storage of the mesh in this way allows us to perform incremental updates (we only update the mesh in blocks where the underlying TSDF has changed).
@@ -40,7 +45,8 @@ Typedefs for layers containing specific block types and voxel block types.
 * [TsdfLayer](@ref nvblox::TsdfLayer)
 * [EsdfLayer](@ref nvblox::EsdfLayer)
 * [ColorLayer](@ref nvblox::ColorLayer)
-* [MeshLayer](@ref nvblox::MeshLayer)
+* [OccupancyLayer](@ref nvblox::OccupancyLayer)
+* [FreespaceLayer](@ref nvblox::FreespaceLayer)
 
 ## Layer Cake
 

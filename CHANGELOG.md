@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [v.0.0.6] - Date: 2024-05-08
+
+### Added
+
+- Add end-to-end benchmark script. (#441)
+  - Generate KPIs directly from single invocation of script
+- Add block pool allocation during startup. (#468)
+- Add data structure to store 3d ESDF grid. (#500)
+- Add GPU serialization of voxel layers. (#512)
+  - Mesh serializer is generalized in order to support serialization of voxel-block layers.
+- Add and integrate image cache. (#526)
+  - Allow image cache to have cached images of different sizes at the same time.
+- Add delay measurement feature. (#541)
+
+
+### Changed
+
+- Change decay to have view-based voxel exclusion. (#466)
+- Change weighting function to linear with max weighting from squared dropoff. (#476)
+- Move parameters to separate class. (#533)
+- Update to jetpack 6. (#539)
+
+
+### Fixed
+
+- Fix unified ptr async cloner. (#456)
+  - 10 percent speedup for replica integration
+- Disable multithreading in image reader. (#487)
+- Disable checks for mapping type in human mapper. (#521)
+  - Support for multi-cam as we run humans only in one camera.
+- Support external CMAKE_CUDA_ARCHITECTURES. (#549)
+- Fix image buffers allocation for dynamics.  (#550)
+
+
 ## [v.0.0.5] - Date: 2023-10-18
 
 ### Added

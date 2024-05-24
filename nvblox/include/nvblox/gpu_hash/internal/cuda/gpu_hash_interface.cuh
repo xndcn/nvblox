@@ -30,9 +30,6 @@ limitations under the License.
 namespace nvblox {
 
 template <typename BlockType>
-using IndexBlockPair = thrust::pair<Index3D, BlockType*>;
-
-template <typename BlockType>
 using ConstIndexBlockPair = thrust::pair<const Index3D, BlockType*>;
 
 template <typename BlockType>

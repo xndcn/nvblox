@@ -113,6 +113,9 @@ class ImageMasker {
                       ImageType* masked_output,
                       ColorImage* overlay_output = nullptr);
 
+  // Image buffers
+  DepthImage min_depth_image_{MemoryType::kDevice};
+
   // Params
   float occlusion_threshold_m_ = 0.25;
   float depth_masked_image_invalid_pixel_ = -1.0;

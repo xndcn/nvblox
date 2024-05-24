@@ -33,6 +33,13 @@ class SphereTracer {
   SphereTracer(std::shared_ptr<CudaStream> cuda_stream);
   ~SphereTracer() = default;
 
+  /// Struct to describe the size of (possibly subsampled) sphere traced image.
+  struct SubsampledImageSize {
+    SubsampledImageSize(int _rows, int _cols) : rows(_rows), cols(_cols) {}
+    int rows;
+    int cols;
+  };
+
   /// Render an image on the GPU
   /// Rendering occurs by sphere tracing the passed TsdfLayer. This allocates if
   /// the passed output image does not have the right size.
@@ -146,6 +153,14 @@ class SphereTracer {
                             ColorImageView* color_ptr,
                             const MemoryType output_image_memory_type,
                             const int ray_subsampling_factor = 1);
+
+  /// Returns the size of a (possibly subsampled) sphere traced image.
+  /// @param camera The intrinsics of the viewing camera.
+  /// @param subsampling_factor The subsampling rate applied to the number of
+  /// traced rays.
+  /// @return The size of the resulting image.
+  SubsampledImageSize getSubsampledImageSize(
+      const Camera& camera, const int subsampling_factor) const;
 
   /// A parameter getter.
   /// The maximum number of steps along a ray allowed before ray casting fails.

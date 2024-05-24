@@ -19,6 +19,7 @@ limitations under the License.
 #include "nvblox/integrators/weighting_function.h"
 
 #include "nvblox/core/log_odds.h"
+#include "nvblox/integrators/occupancy_integrator_params.h"
 
 namespace nvblox {
 
@@ -33,11 +34,6 @@ struct UpdateOccupancyVoxelFunctor;
 class ProjectiveOccupancyIntegrator
     : public ProjectiveIntegrator<OccupancyVoxel> {
  public:
-  static constexpr float kDefaultFreeRegionOccupancyProbability = 0.3;
-  static constexpr float kDefaultOccupiedRegionOccupancyProbability = 0.7;
-  static constexpr float kDefaultUnobservedRegionOccupancyProbability = 0.5;
-  static constexpr float kDefaultOccupiedRegionHalfWidthM = 0.1;
-
   ProjectiveOccupancyIntegrator();
   ProjectiveOccupancyIntegrator(std::shared_ptr<CudaStream> cuda_stream);
   virtual ~ProjectiveOccupancyIntegrator();
@@ -135,13 +131,14 @@ class ProjectiveOccupancyIntegrator
   std::string getIntegratorName() const override;
 
   // Sensor model parameters
-  float free_region_log_odds_ =
-      logOddsFromProbability(kDefaultFreeRegionOccupancyProbability);
-  float occupied_region_log_odds_ =
-      logOddsFromProbability(kDefaultOccupiedRegionOccupancyProbability);
-  float unobserved_region_log_odds_ =
-      logOddsFromProbability(kDefaultUnobservedRegionOccupancyProbability);
-  float occupied_region_half_width_m_ = kDefaultOccupiedRegionHalfWidthM;
+  float free_region_log_odds_ = logOddsFromProbability(
+      kFreeRegionOccupancyProbabilityParamDesc.default_value);
+  float occupied_region_log_odds_ = logOddsFromProbability(
+      kOccupiedRegionOccupancyProbabilityParamDesc.default_value);
+  float unobserved_region_log_odds_ = logOddsFromProbability(
+      kUnobservedRegionOccupancyProbabilityParamDesc.default_value);
+  float occupied_region_half_width_m_ =
+      kOccupiedRegionHalfWidthMParamDesc.default_value;
 
   // Functor which defines the voxel update operation.
   unified_ptr<UpdateOccupancyVoxelFunctor> update_functor_host_ptr_;

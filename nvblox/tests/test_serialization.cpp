@@ -18,10 +18,10 @@ limitations under the License.
 
 #include "nvblox/io/layer_cake_io.h"
 #include "nvblox/map/layer.h"
+#include "nvblox/map_saving/internal/layer_serialization.h"
+#include "nvblox/map_saving/internal/layer_type_register.h"
+#include "nvblox/map_saving/internal/serializer.h"
 #include "nvblox/primitives/scene.h"
-#include "nvblox/serialization/internal/layer_serialization.h"
-#include "nvblox/serialization/internal/layer_type_register.h"
-#include "nvblox/serialization/internal/serializer.h"
 
 #include "nvblox/tests/utils.h"
 

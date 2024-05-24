@@ -57,7 +57,6 @@ ParameterTreeNode::ParameterTreeNode(
     const std::string& name, const std::vector<ParameterTreeNode>& children)
     : name_(name), children_(children) {
   CHECK(!name.empty());
-  CHECK_GT(children.size(), 0);
 }
 
 const std::string& ParameterTreeNode::name() const { return name_; }
@@ -68,6 +67,10 @@ const std::optional<std::string>& ParameterTreeNode::value_string() const {
 
 const std::optional<std::vector<ParameterTreeNode>>&
 ParameterTreeNode::children() const {
+  return children_;
+}
+
+std::optional<std::vector<ParameterTreeNode>>& ParameterTreeNode::children() {
   return children_;
 }
 
