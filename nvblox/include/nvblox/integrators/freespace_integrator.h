@@ -15,12 +15,13 @@ limitations under the License.
 */
 #pragma once
 
+#include "nvblox/core/parameter_tree.h"
 #include "nvblox/core/time.h"
 #include "nvblox/core/types.h"
+#include "nvblox/integrators/freespace_integrator_params.h"
 #include "nvblox/map/blox.h"
 #include "nvblox/map/common_names.h"
 #include "nvblox/map/layer.h"
-#include "nvblox/core/parameter_tree.h"
 
 namespace nvblox {
 
@@ -33,15 +34,6 @@ namespace nvblox {
 /// paper: https://ieeexplore.ieee.org/document/10218983
 class FreespaceIntegrator {
  public:
-  static constexpr float kDefaultMaxTsdfDistanceForOccupancyM = 0.15;  // tau_d
-  static constexpr int kDefaultMaxUnobservedToKeepConsecutiveOccupancyMs =
-      200;  // tau_s
-  static constexpr int kDefaultMinDurationSinceOccupiedForFreespaceMs =
-      1000;  // tau_w
-  static constexpr int kDefaultMinConsecutiveOccupancyDurationForResetMs =
-      2000;  // tau_r
-  static constexpr bool kDefaultCheckNeighborhood = true;
-
   FreespaceIntegrator();
   FreespaceIntegrator(std::shared_ptr<CudaStream> cuda_stream);
   virtual ~FreespaceIntegrator() = default;
@@ -120,20 +112,22 @@ class FreespaceIntegrator {
   /// @return the parameter tree
   virtual parameters::ParameterTreeNode getParameterTree(
       const std::string& name_remap = std::string()) const;
- 
+
  protected:
   // Parameters (see getters for description)
   // Note: See comment behind each parameter for corresponding dynablox
   // parameter name
   float max_tsdf_distance_for_occupancy_m_{
-      kDefaultMaxTsdfDistanceForOccupancyM};  // tau_d
+      kMaxTsdfDistanceForOccupancyMParamDesc.default_value};  // tau_d
   Time max_unobserved_to_keep_consecutive_occupancy_ms_{
-      kDefaultMaxUnobservedToKeepConsecutiveOccupancyMs};  // tau_s
+      kMaxUnobservedToKeepConsecutiveOccupancyMsParamDesc
+          .default_value};  // tau_s
   Time min_duration_since_occupied_for_freespace_ms_{
-      kDefaultMinConsecutiveOccupancyDurationForResetMs};  // tau_w
+      kMinDurationSinceOccupiedForFreespaceMsParamDesc.default_value};  // tau_w
   Time min_consecutive_occupancy_duration_for_reset_ms_{
-      kDefaultMinConsecutiveOccupancyDurationForResetMs};  // tau_r
-  bool check_neighborhood_ = kDefaultCheckNeighborhood;
+      kMinConsecutiveOccupancyDurationForResetMsParamDesc
+          .default_value};  // tau_r
+  bool check_neighborhood_ = kCheckNeighborhoodParamDesc.default_value;
 
   // Time
   Time last_update_time_ms_{0};

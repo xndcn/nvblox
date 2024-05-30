@@ -59,7 +59,9 @@ class CudaStreamOwning : public CudaStream {
  public:
   /// Creates the stream on construction and synchronizes+destroys on
   /// destruction.
-  CudaStreamOwning();
+  ///
+  /// @param flags  Stream creation flags from cuda_runtime.h
+  CudaStreamOwning(const unsigned int flags = cudaStreamDefault);
   virtual ~CudaStreamOwning();
 
   // Can't copy owning streams (because both copies would want ownership)

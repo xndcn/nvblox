@@ -19,6 +19,7 @@ limitations under the License.
 #include "nvblox/integrators/internal/cuda/projective_integrators_common.cuh"
 #include "nvblox/integrators/internal/integrators_common.h"
 #include "nvblox/integrators/projective_color_integrator.h"
+#include "nvblox/integrators/projective_integrator_params.h"
 #include "nvblox/interpolation/interpolation_2d.h"
 #include "nvblox/utils/timing.h"
 
@@ -32,8 +33,7 @@ ProjectiveColorIntegrator::ProjectiveColorIntegrator(
     : ProjectiveIntegrator<ColorVoxel>(cuda_stream),
       update_functor_host_ptr_(
           make_unified<UpdateColorVoxelFunctor>(MemoryType::kHost)),
-      sphere_tracer_(cuda_stream),
-      synthetic_depth_image_(MemoryType::kDevice) {
+      sphere_tracer_(cuda_stream) {
   sphere_tracer_.maximum_ray_length_m(max_integration_distance_m_);
 }
 
@@ -95,10 +95,17 @@ void ProjectiveColorIntegrator::integrateFrame(
   allocateBlocksWhereRequired(block_indices, color_layer, *cuda_stream_);
   allocate_blocks_timer.Stop();
 
+  // Get preallocated space for the synthetic depth image
+  const SphereTracer::SubsampledImageSize image_size =
+      sphere_tracer_.getSubsampledImageSize(
+          camera, sphere_tracing_ray_subsampling_factor_);
+  DepthImage* synthetic_depth_image = synthetic_depth_images_.get(
+      image_size.rows, image_size.cols, MemoryType::kDevice);
+
   // Create a synthetic depth image
   timing::Timer sphere_trace_timer("color/integrate/sphere_trace");
   sphere_tracer_.renderImageOnGPU(
-      camera, T_L_C, tsdf_layer, truncation_distance_m, &synthetic_depth_image_,
+      camera, T_L_C, tsdf_layer, truncation_distance_m, synthetic_depth_image,
       MemoryType::kDevice, sphere_tracing_ray_subsampling_factor_);
   sphere_trace_timer.Stop();
 
@@ -119,7 +126,7 @@ void ProjectiveColorIntegrator::integrateFrame(
 
   // Calling the GPU to do the updates
   timing::Timer update_blocks_timer("color/integrate/update_blocks");
-  integrateBlocks(synthetic_depth_image_, color_frame, T_C_L, camera,
+  integrateBlocks(*synthetic_depth_image, color_frame, T_C_L, camera,
                   update_functor_device.get(), color_layer);
 
   if (updated_blocks != nullptr) {
@@ -241,10 +248,10 @@ struct UpdateColorVoxelFunctor {
     voxel_ptr->weight = weight;
     return true;
   }
-  WeightingFunction weighting_function_ = WeightingFunction(
-      ProjectiveColorIntegrator::kDefaultWeightingFunctionType);
+  WeightingFunction weighting_function_ =
+      kProjectiveIntegratorWeightingModeParamDesc.default_value;
   float truncation_distance_m_ = 0.2f;
-  float max_weight_ = ProjectiveColorIntegrator::kDefaultMaxWeight;
+  float max_weight_ = kProjectiveIntegratorMaxWeightParamDesc.default_value;
 };
 
 unified_ptr<UpdateColorVoxelFunctor>

@@ -24,10 +24,11 @@ namespace nvblox {
 /// conversions.
 class Time {
  public:
-  __host__ __device__ explicit Time(int64_t time) : time_(time) {}
+  constexpr __host__ __device__ explicit Time(int64_t time) : time_(time) {}
+  constexpr Time() : time_(0UL) {}
+
   // Conversion operator to int64_t
   explicit operator int64_t() const { return time_; }
-
   // Heaps of (trivial) operator overloading
   __host__ __device__ bool operator==(const Time& other) const {
     return time_ == other.time_;

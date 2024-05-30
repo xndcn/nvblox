@@ -4,7 +4,7 @@ In this page give some brief details of how to interact with nvblox on a library
 
 ## High-level Interface
 
-The top level interface is the `Mapper` class.
+The top level interface is the [Mapper](@ref nvblox::Mapper) class.
 
 ```bash
 const float voxel_size_m = 0.05;
@@ -14,26 +14,27 @@ Mapper(voxel_size_s, memory_type);
 
 This creates a mapper, which also allocates an empty map. Here we specify that voxels will be 5cm is size, and will be stored on the GPU (device).
 
-The mapper has methods for adding depth and color images to the reconstruction.
+The mapper has methods [integrateDepth](@ref nvblox::Mapper::integrateDepth) and [integrateColor](@ref nvblox::Mapper::integrateColor) for adding depth and color images to the reconstruction:
 
 ```bash
 mapper.integrateDepth(depth_image, T_L_C, camera);
+mapper.integrateColor(color_image, T_L_C, camera);
 ```
 
-The input image `depth_image`, the camera pose `T_L_C`, and the camera intrinsic model `camera` need to be supplied by the user of nvblox.
+The input [image](@ref nvblox::DepthImage) `depth_image`, the [camera pose](@ref nvblox::Transform) `T_L_C`, and the [camera intrinsic model](@ref nvblox::Camera) `camera` need to be supplied by the user of nvblox.
 
 The function call above integrates the observations into a 3D TSDF voxel grid.
 The TSDF is rarely the final desired output and usually we would like to generate a Euclidian Signed Distance Function (ESDF) for pathplanning, or to generate a mesh to view the reconstruction, from the TSDF.
-Mapper includes methods for doing this:
+Mapper includes methods for doing this: [updateEsdf](@ref nvblox::Mapper::updateEsdf) and [updateMesh](@ref nvblox::Mapper::updateMesh):
 
-```bash
+```{.bash}
 mapper.updateEsdf();
 mapper.updateMesh();
 ```
 
 The word "update" here indicates that these functions don't generate the mesh or ESDF from scratch, but only update what's needed.
 
-We could then save the mesh to disk as a `.ply` file.
+We could then save the mesh to disk as a `.ply` file, by using [outputMeshLayerToPly](@ref nvblox::io::outputMeshLayerToPly):
 
 ```bash
 io::outputMeshLayerToPly(mapper.mesh_layer(), "/path/to/my/cool/mesh.ply");
@@ -43,24 +44,10 @@ io::outputMeshLayerToPly(mapper.mesh_layer(), "/path/to/my/cool/mesh.ply");
 
 If you're using nvblox as a library you likely want to work with voxels directly.
 
-Voxels are stored in the class "Layer". A map is composed of multiple layers, which are co-located voxel grids which stored voxels of different types.
-A typical map has for example TSDF, Color layers.
+Voxels are stored in the class [Layer](@ref nvblox::Layer). A map is composed of multiple layers, which are co-located voxel grids which stored voxels of different types.
+A typical map has for example [TSDF](@ref nvblox::TsdfLayer), [ESDF](@ref nvblox::EsdfLayer) and [Color](@ref nvblox::ColorLayer) layers.
 
-Layer provides voxel accessor methods.
-
-
-```cpp
-void getVoxels(const std::vector<Vector3f>& positions_L,
-                std::vector<VoxelType>* voxels_ptr,
-                std::vector<bool>* success_flags_ptr) const;
-
-void getVoxelsGPU(const device_vector<Vector3f>& positions_L,
-                device_vector<VoxelType>* voxels_ptr,
-                device_vector<bool>* success_flags_ptr) const;
-```
-These will return the caller with a vector of voxels on either the GPU or CPU.
-The flags indicate whether the relevant voxel could be found (we only allocate voxels in memory when that area of space is observed).
-If you request a voxel in unobserved space the lookup will fail and write a `false` to that entry in the `success_flags` vector.
+Layer provides voxel accessor methods [getVoxels](@ref nvblox::VoxelBlockLayer::getVoxels) and [getVoxelsGPU](@ref nvblox::VoxelBlockLayer::getVoxelsGPU). These will return the caller with a vector of voxels on either the GPU or CPU.
 
 Calling these functions requires the GPU to run a kernel to retrieve voxels from the voxel grid and copy their values into the output vector.
 In the `getVoxels` we additionally copy the voxel back from the GPU to host (CPU) memory.

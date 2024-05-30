@@ -20,6 +20,7 @@ limitations under the License.
 #include "nvblox/core/parameter_tree.h"
 #include "nvblox/core/types.h"
 #include "nvblox/core/unified_vector.h"
+#include "nvblox/integrators/esdf_integrator_params.h"
 #include "nvblox/map/blox.h"
 #include "nvblox/map/common_names.h"
 #include "nvblox/map/layer.h"
@@ -42,33 +43,9 @@ struct TsdfSiteFunctor;
 /// ESDFLayer from an input TSDFLayer.
 class EsdfIntegrator {
  public:
-  static constexpr float kDefaultMaxEsdfDistanceM = 2.0;
-  static constexpr float kDefaultMaxTsdfSiteDistanceVox = 1.0;
-  static constexpr float kDefaultMinTsdfWeight = 1e-4;
-
   EsdfIntegrator();
   EsdfIntegrator(std::shared_ptr<CudaStream> cuda_stream);
   virtual ~EsdfIntegrator() = default;
-
-  /// Build an EsdfLayer from a TsdfLayer
-  /// @param tsdf_layer The input TsdfLayer
-  /// @param[out] esdf_layer The output EsdfLayer
-  void integrateLayer(const TsdfLayer& tsdf_layer, EsdfLayer* esdf_layer);
-
-  /// Build an EsdfLayer from a TsdfLayer and a FreespaceLayer
-  /// @param tsdf_layer The input TsdfLayer
-  /// @param freespace_layer The input freespace layer (esdf sites are
-  /// ignored if they fall into freespace)
-  /// @param[out] esdf_layer The output EsdfLayer
-  void integrateLayer(const TsdfLayer& tsdf_layer,
-                      const FreespaceLayer& freespace_layer,
-                      EsdfLayer* esdf_layer);
-
-  /// Build an EsdfLayer from a OccupancyLayer
-  /// @param occupancy_layer The input OccupancyLayer
-  /// @param[out] esdf_layer The output EsdfLayer
-  void integrateLayer(const OccupancyLayer& occupancy_layer,
-                      EsdfLayer* esdf_layer);
 
   /// Build an EsdfLayer from a TsdfLayer (incremental) (on GPU)
   /// @param tsdf_layer The input TsdfLayer
@@ -261,9 +238,9 @@ class EsdfIntegrator {
                            float max_squared_esdf_distance_vox,
                            device_vector<Index3D>* updated_block_indices);
 
-  void sweepBlockBand(device_vector<Index3D>* block_indices,
-                      EsdfLayer* esdf_layer,
-                      float max_squared_esdf_distance_vox);
+  void sweepBlockBandAsync(device_vector<Index3D>* block_indices,
+                           EsdfLayer* esdf_layer,
+                           float max_squared_esdf_distance_vox);
   void computeEsdf(const device_vector<Index3D>& blocks_with_sites,
                    EsdfLayer* esdf_layer);
   void clearAllInvalid(const std::vector<Index3D>& blocks_to_clear,
@@ -275,15 +252,17 @@ class EsdfIntegrator {
 
   /// @brief EsdfLayer related parameter
   /// Maximum distance to compute the ESDF.
-  float max_esdf_distance_m_ = kDefaultMaxEsdfDistanceM;
+  float max_esdf_distance_m_ =
+      kEsdfIntegratorMaxDistanceMParamDesc.default_value;
 
   /// @brief TsdfLayer related parameter
   /// Maximum (TSDF) distance at which a voxel is considered a site
-  float max_tsdf_site_distance_vox_ = kDefaultMaxTsdfSiteDistanceVox;
+  float max_tsdf_site_distance_vox_ =
+      kEsdfIntegratorMaxSiteDistanceVoxParamDesc.default_value;
 
   /// @brief TsdfLayer related parameter
   /// Minimum weight to consider a TSDF voxel observed.
-  float tsdf_min_weight_ = kDefaultMinTsdfWeight;
+  float tsdf_min_weight_ = kEsdfIntegratorMinWeightParamDesc.default_value;
 
   /// @brief OccupancyLayer related parameter
   /// The log odds value greater than which we consider a voxel occupied
@@ -307,6 +286,10 @@ class EsdfIntegrator {
   unified_ptr<int> updated_counter_host_;
   unified_ptr<int> cleared_counter_device_;
   unified_ptr<int> cleared_counter_host_;
+  int* counter_buffer_device_;
+  int* counter_buffer_host_;
+
+  device_vector<EsdfBlock*> temp_block_pointers_;
 };
 
 }  // namespace nvblox

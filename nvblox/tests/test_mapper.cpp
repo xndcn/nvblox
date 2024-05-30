@@ -45,7 +45,7 @@ primitives::Scene getSphereInABoxScene(const Vector3f& sphere_center,
 bool allMeshPointsOnSphere(const MeshLayer& mesh_layer, const Vector3f& center,
                            const float sphere_radius) {
   Mesh mesh = Mesh::fromLayer(mesh_layer);
-  for (const Vector3f p : mesh.vertices) {
+  for (const Vector3f& p : mesh.vertices) {
     constexpr float kVertexEps = 0.01;
     if (std::abs((p - center).norm() - sphere_radius) > kVertexEps) {
       return false;
@@ -82,13 +82,15 @@ TEST(MapperTest, ClearOutsideSphere) {
 
   EXPECT_GT(mapper.tsdf_layer().numAllocatedBlocks(), 0);
 
-  mapper.updateFullMesh();
-  mapper.updateFullEsdf();
+  mapper.updateMesh(UpdateFullLayer::kYes);
+  mapper.updateEsdf(UpdateFullLayer::kYes);
 
   // allocate color, just so we can clear later
   for (const Index3D& idx : mapper.tsdf_layer().getAllBlockIndices()) {
     mapper.color_layer().allocateBlockAtIndex(idx);
   }
+  const float num_allocated_blocks_before_clear =
+      mapper.tsdf_layer().numAllocatedBlocks();
 
   // Create a copy of the mesh layer on host.
   MeshLayer mesh_layer_host(voxel_size_m, MemoryType::kHost);
@@ -101,6 +103,9 @@ TEST(MapperTest, ClearOutsideSphere) {
   // Clearing outside of sphere
   mapper.clearOutsideRadius(sphere_center, sphere_radius);
 
+  EXPECT_GT(mapper.tsdf_layer().numAllocatedBlocks(), 0);
+  EXPECT_LT(mapper.tsdf_layer().numAllocatedBlocks(),
+            num_allocated_blocks_before_clear);
   EXPECT_EQ(mapper.tsdf_layer().numAllocatedBlocks(),
             mapper.esdf_layer().numAllocatedBlocks());
   EXPECT_EQ(mapper.tsdf_layer().numAllocatedBlocks(),
@@ -205,7 +210,8 @@ TEST(MapperTest, GenerateEsdfInFakeObservedAreas) {
     }
   }
 
-  // Check that previously observed voxels in the truncation band are unaffected
+  // Check that previously observed voxels in the truncation band are
+  // unaffected
   auto vox_and_flag_after = mapper.tsdf_layer().getVoxel({4.0, 0.0, 0.0});
   EXPECT_TRUE(vox_and_flag_after.second);
   auto voxel_in_band_after = vox_and_flag_after.first;
@@ -226,6 +232,55 @@ TEST(MapperTest, GenerateEsdfInFakeObservedAreas) {
     mapper.saveMeshAsPly("./mapper_test_plane_mesh.ply");
     mapper.saveEsdfAsPly("./mapper_test_plane_esdf.ply");
   }
+}
+
+class MapperUpdateMeshTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    // Make a scene 6x6x3 meters big.
+    primitives::Scene scene;
+
+    Camera camera(300, 300, 320, 240, 640, 480);
+    scene.addPrimitive(std::make_unique<primitives::Plane>(
+        Vector3f(0.0f, 0.0, 1.0), Vector3f(0, 0, -1)));
+    Transform T_S_C = Transform::Identity();
+    DepthImage depth_frame(camera.height(), camera.width(),
+                           MemoryType::kUnified);
+
+    constexpr float max_dist = 10.0;
+    scene.generateDepthImageFromScene(camera, T_S_C, max_dist, &depth_frame);
+
+    TsdfLayer tsdf_layer_host(kVoxelSizeM, MemoryType::kHost);
+    scene.generateLayerFromScene(1.0, &tsdf_layer_host);
+
+    mapper_.tsdf_layer().copyFrom(tsdf_layer_host);
+
+    mapper_.integrateDepth(depth_frame, T_S_C, camera);
+    EXPECT_GT(mapper_.tsdf_layer().numAllocatedBlocks(), 0);
+  }
+  static constexpr float kVoxelSizeM = 0.1F;
+  Mapper mapper_{kVoxelSizeM, MemoryType::kHost};
+};
+
+TEST_F(MapperUpdateMeshTest, updateMeshZeroMbps) {
+  mapper_.mesh_bandwidth_limit_mbps(0);
+  std::shared_ptr<const SerializedMesh> serialized_mesh = mapper_.updateMesh();
+  ASSERT_EQ(serialized_mesh->vertices.size(), 0);
+}
+
+TEST_F(MapperUpdateMeshTest, updateMeshUnLimited) {
+  mapper_.mesh_bandwidth_limit_mbps(-1.);
+  std::shared_ptr<const SerializedMesh> serialized_mesh = mapper_.updateMesh();
+  ASSERT_GT(serialized_mesh->vertices.size(), 0);
+}
+
+TEST_F(MapperUpdateMeshTest, updateMeshLimited) {
+  mapper_.mesh_bandwidth_limit_mbps(10);
+  mapper_.updateMesh();
+  std::shared_ptr<const SerializedMesh> serialized_mesh = mapper_.updateMesh();
+  // Since the mesh size is based on bandwidth estimation it's difficult to
+  // predict how large it will be. Therefore we check for a nozero size here.
+  ASSERT_GT(serialized_mesh->vertices.size(), 0);
 }
 
 int main(int argc, char** argv) {

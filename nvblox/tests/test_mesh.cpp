@@ -130,8 +130,8 @@ TEST_F(MeshTest, PlaneMesh) {
 
     unified_vector<Vector3f> vertices(MemoryType::kHost);
     unified_vector<Vector3f> normals(MemoryType::kHost);
-    vertices.copyFrom(mesh_block->vertices);
-    normals.copyFrom(mesh_block->normals);
+    vertices.copyFromAsync(mesh_block->vertices, CudaStreamOwning());
+    normals.copyFromAsync(mesh_block->normals, CudaStreamOwning());
 
     // Make sure that the actual points are correct.
     for (size_t i = 0; i < vertices.size(); i++) {
@@ -223,8 +223,8 @@ TEST_F(MeshTest, GPUPlaneTest) {
 
     unified_vector<Vector3f> vertices(MemoryType::kHost);
     unified_vector<Vector3f> normals(MemoryType::kHost);
-    vertices.copyFrom(mesh_block->vertices);
-    normals.copyFrom(mesh_block->normals);
+    vertices.copyFromAsync(mesh_block->vertices, CudaStreamOwning());
+    normals.copyFromAsync(mesh_block->normals, CudaStreamOwning());
 
     // Make sure that the actual points are correct.
     for (size_t i = 0; i < vertices.size(); i++) {
@@ -401,8 +401,8 @@ TEST_F(MeshTest, RepeatabilityTest) {
 
     unified_vector<Vector3f> vertex_vector_1(MemoryType::kHost);
     unified_vector<Vector3f> vertex_vector_2(MemoryType::kHost);
-    vertex_vector_1.copyFrom(block_1->vertices);
-    vertex_vector_2.copyFrom(block_2->vertices);
+    vertex_vector_1.copyFromAsync(block_1->vertices, CudaStreamOwning());
+    vertex_vector_2.copyFromAsync(block_2->vertices, CudaStreamOwning());
     std::sort(vertex_vector_1.begin(), vertex_vector_1.end(), threed_less);
     std::sort(vertex_vector_2.begin(), vertex_vector_2.end(), threed_less);
     for (size_t i = 0; i < vertex_vector_1.size(); i++) {
@@ -432,8 +432,9 @@ TEST_F(MeshTest, WeldingTest) {
   std::vector<Index3D> block_indices_mesh = mesh_layer_->getAllBlockIndices();
   EXPECT_GT(block_indices_mesh.size(), 0);
 
-  // Ok now we have the original mesh. We're going to do the stupidest possible
-  // thing: weld vertices one block at a time and make sure it's good.
+  // Ok now we have the original mesh. We're going to do the stupidest
+  // possible thing: weld vertices one block at a time and make sure it's
+  // good.
   for (const Index3D& index : block_indices_mesh) {
     std::vector<Index3D> one_single_index(1, index);
 
@@ -441,7 +442,8 @@ TEST_F(MeshTest, WeldingTest) {
     MeshBlock::Ptr mesh_block = mesh_layer_->getBlockAtIndex(index);
     size_t num_vertices_preweld = mesh_block->size();
 
-    weldVerticesThrust(one_single_index, mesh_layer_.get());
+    weldVerticesThrustAsync(one_single_index, mesh_layer_.get(),
+                            CudaStreamOwning());
 
     size_t num_vertices_postweld = mesh_block->size();
 
@@ -525,36 +527,39 @@ TEST_F(MeshTest, WeldingPartsTest) {
 
     // Create a copy of the vertices.
     device_vector<Vector3f> input_vertices;
-    input_vertices.copyFrom(mesh_block->vertices);
+    input_vertices.copyFromAsync(mesh_block->vertices, CudaStreamOwning());
     device_vector<Vector3f> thrust_vertices;
-    thrust_vertices.copyFrom(mesh_block->vertices);
+    thrust_vertices.copyFromAsync(mesh_block->vertices, CudaStreamOwning());
     device_vector<Vector3f> kernel_vertices;
-    kernel_vertices.copyFrom(mesh_block->vertices);
+    kernel_vertices.copyFromAsync(mesh_block->vertices, CudaStreamOwning());
     device_vector<Vector3f> unique_vertices;
-    unique_vertices.copyFrom(mesh_block->vertices);
+    unique_vertices.copyFromAsync(mesh_block->vertices, CudaStreamOwning());
     device_vector<int> input_indices;
-    input_indices.copyFrom(mesh_block->triangles);
+    input_indices.copyFromAsync(mesh_block->triangles, CudaStreamOwning());
     device_vector<int> combined_indices;
-    combined_indices.copyFrom(mesh_block->triangles);
+    combined_indices.copyFromAsync(mesh_block->triangles, CudaStreamOwning());
     device_vector<Vector3f> combined_vertices;
-    combined_vertices.copyFrom(mesh_block->vertices);
+    combined_vertices.copyFromAsync(mesh_block->vertices, CudaStreamOwning());
     device_vector<int> thrust_combined_indices;
-    thrust_combined_indices.copyFrom(mesh_block->triangles);
+    thrust_combined_indices.copyFromAsync(mesh_block->triangles,
+                                          CudaStreamOwning());
     device_vector<Vector3f> thrust_combined_vertices;
-    thrust_combined_vertices.copyFrom(mesh_block->vertices);
+    thrust_combined_vertices.copyFromAsync(mesh_block->vertices,
+                                           CudaStreamOwning());
 
     // First sort them with thrust.
-    sortSingleBlockThrust(&thrust_vertices);
-    sortSingleBlockCub(&input_vertices, &kernel_vertices);
+    sortSingleBlockThrustAsync(&thrust_vertices, CudaStreamOwning());
+    sortSingleBlockCubAsync(&input_vertices, &kernel_vertices,
+                            CudaStreamOwning());
 
     // Sort order is unfortunately different for the vectors. :( Since CUB
     // vectors are sorted by hash value.
     host_vector<Vector3f> kernel_vertices_host;
-    kernel_vertices_host.copyFrom(kernel_vertices);
+    kernel_vertices_host.copyFromAsync(kernel_vertices, CudaStreamOwning());
     host_vector<Vector3f> input_vertices_host;
-    input_vertices_host.copyFrom(input_vertices);
+    input_vertices_host.copyFromAsync(input_vertices, CudaStreamOwning());
     host_vector<int> input_indices_host;
-    input_indices_host.copyFrom(input_indices);
+    input_indices_host.copyFromAsync(input_indices, CudaStreamOwning());
 
     if (kernel_vertices.size() <= 3) {
       continue;
@@ -570,10 +575,11 @@ TEST_F(MeshTest, WeldingPartsTest) {
     }
 
     // Next up run unique on this whole thing.
-    uniqueSingleBlockCub(&kernel_vertices, &unique_vertices);
+    uniqueSingleBlockCubAsync(&kernel_vertices, &unique_vertices,
+                              CudaStreamOwning());
 
     host_vector<Vector3f> unique_vertices_host;
-    unique_vertices_host.copyFrom(unique_vertices);
+    unique_vertices_host.copyFromAsync(unique_vertices, CudaStreamOwning());
 
     // Check that they're all unique!
     for (size_t i = 1; i < unique_vertices_host.size(); i++) {
@@ -582,13 +588,14 @@ TEST_F(MeshTest, WeldingPartsTest) {
     }
 
     // Try the combined version. All at once.
-    combinedSingleBlockCub(&input_vertices, &input_indices, &combined_vertices,
-                           &combined_indices);
+    combinedSingleBlockCubAsync(&input_vertices, &input_indices,
+                                &combined_vertices, &combined_indices,
+                                CudaStreamOwning());
 
     host_vector<Vector3f> combined_vertices_host;
-    combined_vertices_host.copyFrom(combined_vertices);
+    combined_vertices_host.copyFromAsync(combined_vertices, CudaStreamOwning());
     host_vector<int> combined_indices_host;
-    combined_indices_host.copyFrom(combined_indices);
+    combined_indices_host.copyFromAsync(combined_indices, CudaStreamOwning());
 
     // Check the indices.
     for (size_t i = 0; i < combined_indices_host.size(); i++) {
@@ -608,13 +615,16 @@ TEST_F(MeshTest, WeldingPartsTest) {
     }
 
     // Thrust it up.
-    weldSingleBlockThrust(&input_vertices, &input_indices,
-                          &thrust_combined_vertices, &thrust_combined_indices);
+    weldSingleBlockThrustAsync(&input_vertices, &input_indices,
+                               &thrust_combined_vertices,
+                               &thrust_combined_indices, CudaStreamOwning());
 
     host_vector<int> thrust_combined_indices_host;
-    thrust_combined_indices_host.copyFrom(thrust_combined_indices);
+    thrust_combined_indices_host.copyFromAsync(thrust_combined_indices,
+                                               CudaStreamOwning());
     host_vector<Vector3f> thrust_combined_vertices_host;
-    thrust_combined_vertices_host.copyFrom(thrust_combined_vertices);
+    thrust_combined_vertices_host.copyFromAsync(thrust_combined_vertices,
+                                                CudaStreamOwning());
 
     // Check that they're all unique!
     for (size_t i = 1; i < thrust_combined_vertices_host.size(); i++) {

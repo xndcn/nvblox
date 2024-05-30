@@ -22,20 +22,11 @@ limitations under the License.
 
 #include <glog/logging.h>
 
+#include "nvblox/core/types.h"
+
 namespace nvblox {
 namespace parameters {
 
-// Making a templated version of std::to_string for the default constructor
-// argument below.
-template <typename ParameterType>
-inline std::string to_string(const ParameterType& val) {
-  return std::to_string(val);
-}
-
-template <>
-inline std::string to_string(const std::string& val) {
-  return val;
-}
 // A class representing a node in a parameter tree. A node is either:
 // - A leaf, which is a single parameter, or
 // - Not a leaf, which represents a component of nvblox containing parameters.
@@ -50,7 +41,7 @@ class ParameterTreeNode {
   explicit ParameterTreeNode(const std::string& name,
                              const ParameterType& value,
                              std::function<std::string(const ParameterType&)>
-                                 _to_string = to_string<ParameterType>)
+                                 _to_string = toString<ParameterType>)
       : name_(name), value_string_(_to_string(value)) {
     CHECK(!name.empty());
   }
@@ -72,6 +63,11 @@ class ParameterTreeNode {
   /// Note that leaf nodes do not have children.
   /// @return The (optional) children
   const std::optional<std::vector<ParameterTreeNode>>& children() const;
+
+  /// Returns the (optional) children of this node in the parameter tree.
+  /// Note that leaf nodes do not have children.
+  /// @return The (optional) children
+  std::optional<std::vector<ParameterTreeNode>>& children();
 
   /// Returns true if this node is a leaf.
   /// @return true if this node is a leaf

@@ -357,7 +357,7 @@ TEST_F(TsdfIntegratorTest, WeightingFunction) {
 
   // Check that weighting function gets initialized to the default
   EXPECT_EQ(integrator.weighting_function_type(),
-            ProjectiveTsdfIntegrator::kDefaultWeightingFunctionType);
+            kProjectiveIntegratorWeightingModeParamDesc.default_value);
 
   // Change to constant weight
   integrator.weighting_function_type(WeightingFunctionType::kConstantWeight);

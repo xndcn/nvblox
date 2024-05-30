@@ -163,7 +163,7 @@ TEST_F(LidarIntegrationTest, LidarBlocksInView) {
       1, 1, 1;         // NOLINT
 
   // Check that all these blocks have at least one corner in view
-  for (const Index3D block_index : blocks_in_view) {
+  for (const Index3D& block_index : blocks_in_view) {
     // Lower corner position
     const Vector3f p_low = getPositionFromBlockIndex(
         voxelSizeToBlockSize(voxel_size), block_index);

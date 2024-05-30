@@ -187,9 +187,11 @@ class PaddedBlock {
     const VoxelType* source_voxel_ptr =
         block_neighbors.getVoxel(source_block_index, source_voxel_index);
     if (source_voxel_ptr == nullptr) {
-      // if the voxel doesn't exist  ( because the block is outside the map) we
+      // if the voxel doesn't exist  (because the block is outside the map) we
       // duplicate an adjacent voxel insted.
-      assert(!isWithinBlockBounds(source_voxel_index));
+
+      // Sanity check that the input index was really on the border
+      assert(!isWithinBlockBounds(voxel_index));
       clamp(source_voxel_index, 0, kVoxelsPerSide - 1);
       source_voxel_ptr =
           block_neighbors.getVoxel(center_block_index, source_voxel_index);
@@ -486,7 +488,8 @@ void FreespaceIntegrator::updateFreespaceLayer(
 
   // Allocate missing blocks
   timing::Timer allocate_timer("freespace/integrate/allocate");
-  freespace_layer_ptr->allocateBlocksAtIndices(block_indices_to_update, *cuda_stream_);
+  freespace_layer_ptr->allocateBlocksAtIndices(block_indices_to_update,
+                                               *cuda_stream_);
   allocate_timer.Stop();
 
   timing::Timer update_timer("freespace/integrate/update_blocks");
@@ -512,17 +515,19 @@ void FreespaceIntegrator::updateFreespaceLayer(
 
   updateFreespaceLayerKernel<<<num_thread_blocks, kThreadsPerBlock, 0,
                                *cuda_stream_>>>(
-      tsdf_layer.getGpuLayerView().getHash().impl_,           // NOLINT
-      block_indices_to_update_device_.data(),                 // NOLINT
-      freespace_layer_ptr->voxel_size(),                      // NOLINT
-      max_tsdf_distance_for_occupancy_m_,                     // NOLINT
-      max_unobserved_to_keep_consecutive_occupancy_ms_,       // NOLINT
-      min_duration_since_occupied_for_freespace_ms_,          // NOLINT
-      min_consecutive_occupancy_duration_for_reset_ms_,       // NOLINT
-      check_neighborhood_,                                    // NOLINT
-      last_update_time_ms_,                                   // NOLINT
-      current_update_time_ms_,                                // NOLINT
-      freespace_layer_ptr->getGpuLayerView().getHash().impl_  // NOLINT
+      tsdf_layer.getGpuLayerViewAsync(*cuda_stream_).getHash().impl_,  // NOLINT
+      block_indices_to_update_device_.data(),                          // NOLINT
+      freespace_layer_ptr->voxel_size(),                               // NOLINT
+      max_tsdf_distance_for_occupancy_m_,                              // NOLINT
+      max_unobserved_to_keep_consecutive_occupancy_ms_,                // NOLINT
+      min_duration_since_occupied_for_freespace_ms_,                   // NOLINT
+      min_consecutive_occupancy_duration_for_reset_ms_,                // NOLINT
+      check_neighborhood_,                                             // NOLINT
+      last_update_time_ms_,                                            // NOLINT
+      current_update_time_ms_,                                         // NOLINT
+      freespace_layer_ptr->getGpuLayerViewAsync(*cuda_stream_)
+          .getHash()
+          .impl_  // NOLINT
   );
   cuda_stream_->synchronize();
   checkCudaErrors(cudaPeekAtLastError());

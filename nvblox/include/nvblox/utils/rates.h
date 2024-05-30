@@ -120,7 +120,7 @@ class Rates {
   /// @return A table of the rates of the ticked tags as a string.
   static std::string Print();
 
-  // Get a reference to the Rates singleton
+  /// Get a reference to the Rates singleton
   /// @return A reference to this program's rates singleton
   static Rates& getInstance();
 
@@ -139,9 +139,11 @@ class Rates {
   /// @return The list of tags.
   static std::vector<std::string> getTags();
 
-  static bool exists(const std::string& tag) {
-    return !(getInstance().tickers_.find(tag) == getInstance().tickers_.end());
-  }
+  /// Does a ticker associated with the tag already exist (and have
+  /// measurements).
+  /// @param tag The name of the ticker.
+  /// @return True if the ticker exists.
+  static bool exists(const std::string& tag);
 
  protected:
   Rates() = default;

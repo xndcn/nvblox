@@ -96,7 +96,7 @@ TEST_F(FrustumTest, FarPlaneImageTest) {
   std::vector<Index3D> blocks_in_view = ViewCalculator::getBlocksInViewPlanes(
       T_S_C, *camera_, block_size_, max_distance);
   std::vector<Index3D> blocks_in_image_view =
-      ViewCalculator::getBlocksInImageViewPlanes(
+      ViewCalculator().getBlocksInImageViewPlanes(
           depth_frame, T_S_C, *camera_, block_size_, 0.0f, max_distance);
   EXPECT_EQ(blocks_in_view.size(), blocks_in_image_view.size());
 
@@ -176,7 +176,7 @@ TEST_F(FrustumTest, PlaneWithGround) {
   blocks_in_view_timer.Stop();
   timing::Timer blocks_in_image_view_timer("blocks_in_image_view");
   std::vector<Index3D> blocks_in_image_view =
-      ViewCalculator::getBlocksInImageViewPlanes(
+      ViewCalculator().getBlocksInImageViewPlanes(
           depth_frame, T_S_C, *camera_, block_size_, 0.0f, max_distance);
   blocks_in_image_view_timer.Stop();
 
@@ -320,9 +320,9 @@ TEST_F(FrustumTest, BlocksInView) {
   constexpr float kMaxDist = 10.0f;
   constexpr float kTruncationDistance = 0.0f;
   const std::vector<Index3D> blocks_in_view =
-      ViewCalculator::getBlocksInImageViewPlanes(depth_frame, T_L_C, camera,
-                                                 kBlockSize,
-                                                 kTruncationDistance, kMaxDist);
+      ViewCalculator().getBlocksInImageViewPlanes(
+          depth_frame, T_L_C, camera, kBlockSize, kTruncationDistance,
+          kMaxDist);
 
   EXPECT_EQ(blocks_in_view.size(), 10);
   for (size_t i = 0; i < blocks_in_view.size(); i++) {
@@ -336,9 +336,10 @@ TEST_F(FrustumTest, ThreeDMatch) {
   constexpr int kFrameNumber = 0;
   float max_distance = 10.0f;
 
+  constexpr bool kUseMultithreaded = false;
   std::unique_ptr<datasets::ImageLoader<DepthImage>> depth_image_loader =
-      datasets::threedmatch::internal::createDepthImageLoader(base_path_,
-                                                              kSequenceNum);
+      datasets::threedmatch::internal::createDepthImageLoader(
+          base_path_, kSequenceNum, kUseMultithreaded);
 
   // Get the first image.
   DepthImage depth_frame(MemoryType::kDevice);
@@ -377,7 +378,7 @@ TEST_F(FrustumTest, ThreeDMatch) {
     blocks_in_view_timer.Stop();
     timing::Timer blocks_in_image_view_timer("blocks_in_image_view");
     std::vector<Index3D> blocks_in_image_view =
-        ViewCalculator::getBlocksInImageViewPlanes(
+        ViewCalculator().getBlocksInImageViewPlanes(
             depth_frame, T_L_C, camera, block_size_, 0.0f, max_distance);
     blocks_in_image_view_timer.Stop();
   }

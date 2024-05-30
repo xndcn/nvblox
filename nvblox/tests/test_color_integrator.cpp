@@ -143,7 +143,7 @@ float checkSphereColor(const ColorLayer& color_layer, const Vector3f& center,
 
   const std::vector<Eigen::Vector3f> sphere_points =
       getPointsOnASphere(radius, center);
-  for (const Vector3f p : sphere_points) {
+  for (const Vector3f& p : sphere_points) {
     const ColorVoxel* color_voxel;
     EXPECT_TRUE(getVoxelAtPosition<ColorVoxel>(color_layer, p, &color_voxel));
     check_color(*color_voxel, color);
@@ -292,7 +292,7 @@ TEST_F(ColorIntegrationTest, IntegrateColorToGroundTruthDistanceField) {
   const std::vector<Eigen::Vector3f> sphere_points =
       getPointsOnASphere(kSphereRadius, kSphereCenter);
   const int num_surface_points_tested = sphere_points.size();
-  for (const Vector3f p : sphere_points) {
+  for (const Vector3f& p : sphere_points) {
     const ColorVoxel* color_voxel;
     EXPECT_TRUE(
         getVoxelAtPosition<ColorVoxel>(color_layer_host, p, &color_voxel));
@@ -312,7 +312,7 @@ TEST_F(ColorIntegrationTest, IntegrateColorToGroundTruthDistanceField) {
   EXPECT_GT(ratio_observed_surface_points, 0.5);
 
   // Check that all color blocks have a corresponding block in the tsdf layer
-  for (const Index3D block_idx : color_layer_host.getAllBlockIndices()) {
+  for (const Index3D& block_idx : color_layer_host.getAllBlockIndices()) {
     EXPECT_NE(gt_layer_.getBlockAtIndex(block_idx), nullptr);
   }
 
@@ -481,7 +481,7 @@ TEST_F(ColorIntegrationTest, OcclusionTesting) {
   // Check back sphere (no observed voxels)
   const std::vector<Eigen::Vector3f> sphere_points =
       getPointsOnASphere(kSphereRadius, center_2);
-  for (const Vector3f p : sphere_points) {
+  for (const Vector3f& p : sphere_points) {
     const ColorVoxel* color_voxel;
     const bool block_allocated =
         getVoxelAtPosition<ColorVoxel>(color_layer_host, p, &color_voxel);
@@ -508,7 +508,7 @@ TEST_F(ColorIntegrationTest, WeightingFunction) {
 
   // Change to constant weight
   EXPECT_EQ(integrator.weighting_function_type(),
-            ProjectiveColorIntegrator::kDefaultWeightingFunctionType);
+            kProjectiveIntegratorWeightingModeParamDesc.default_value);
   integrator.weighting_function_type(
       WeightingFunctionType::kInverseSquareWeight);
   EXPECT_EQ(integrator.weighting_function_type(),

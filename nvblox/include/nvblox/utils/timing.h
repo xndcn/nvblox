@@ -87,6 +87,8 @@ class Accumulator {
 
   int TotalSamples() const { return totalsamples_; }
 
+  int WindowSamples() const { return std::min(window_samples_, N); }
+
   double Sum() const { return sum_; }
 
   double Mean() const { return sum_ / totalsamples_; }

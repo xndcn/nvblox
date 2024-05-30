@@ -15,20 +15,17 @@ limitations under the License.
 */
 #pragma once
 
+#include "nvblox/core/parameter_tree.h"
+#include "nvblox/integrators/mesh_integrator_params.h"
 #include "nvblox/map/common_names.h"
 #include "nvblox/map/layer.h"
 #include "nvblox/mesh/internal/marching_cubes.h"
 #include "nvblox/mesh/mesh_block.h"
-#include "nvblox/core/parameter_tree.h"
-
 namespace nvblox {
 
 /// Class to integrate TSDF data into a mesh using marching cubes.
 class MeshIntegrator {
  public:
-  static constexpr float kDefaultMinWeight = 1e-4;
-  static constexpr bool kDefaultWeldVertices = true;
-
   MeshIntegrator();
   MeshIntegrator(std::shared_ptr<CudaStream> cuda_stream);
   ~MeshIntegrator() = default;
@@ -78,7 +75,8 @@ class MeshIntegrator {
 
   /// Return the parameter tree.
   /// @return the parameter tree
-  virtual parameters::ParameterTreeNode getParameterTree(const std::string& name_remap = std::string()) const;
+  virtual parameters::ParameterTreeNode getParameterTree(
+      const std::string& name_remap = std::string()) const;
 
  private:
   bool isBlockMeshable(const VoxelBlock<TsdfVoxel>::ConstPtr block,
@@ -112,14 +110,14 @@ class MeshIntegrator {
   void weldVertices(device_vector<CudaMeshBlock>* cuda_mesh_blocks);
 
   // Minimum weight to actually mesh.
-  float min_weight_ = kDefaultMinWeight;
+  float min_weight_ = kMeshIntegratorMinWeightParamDesc.default_value;
 
   // The TSDF distance below which we consider a voxel for meshing.
   float cutoff_distance_vox_ = 5.0f;
 
   // Whether to perform vertex welding or not. It cuts down number
   // of vertices by 5x.
-  bool weld_vertices_ = kDefaultWeldVertices;
+  bool weld_vertices_ = kMeshIntegratorWeldVerticesParamDesc.default_value;
 
   // Offsets for cube indices.
   Eigen::Matrix<int, 3, 8> cube_index_offsets_;

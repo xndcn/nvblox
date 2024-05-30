@@ -30,7 +30,7 @@ ProjectiveLayerType findUnmaskedLayerType(MappingType mapping_type) {
     case MappingType::kStaticOccupancy:
       return ProjectiveLayerType::kOccupancy;
     case MappingType::kDynamic:
-      return ProjectiveLayerType::kTsdf;
+      return ProjectiveLayerType::kTsdfWithFreespace;
     case MappingType::kHumanWithStaticTsdf:
       return ProjectiveLayerType::kTsdf;
     case MappingType::kHumanWithStaticOccupancy:
@@ -78,14 +78,6 @@ MultiMapper::MultiMapper(float voxel_size_m, MappingType mapping_type,
   masked_mapper_ = std::make_shared<Mapper>(voxel_size_m, memory_type,
                                             masked_layer_type, cuda_stream);
 
-  if (mapping_type_ == MappingType::kDynamic) {
-    // For dynamic mapping we integrate the full depth into the unmasked mapper
-    // (see NOTE in the integrateDepth function). Therefore, we need to ignore
-    // the esdf sites that fall into freespace because they are actually dynamic
-    // and handled by the masked mapper.
-    unmasked_mapper_->ignore_esdf_sites_in_freespace(true);
-  }
-
   // Set to an invalid depth to ignore dynamic/human pixels in the unmasked
   // mapper during integration.
   image_masker_.depth_unmasked_image_invalid_pixel(-1.f);
@@ -113,11 +105,7 @@ void MultiMapper::integrateDepth(const DepthImage& depth_frame,
                                  const Transform& T_L_CD,
                                  const Camera& depth_camera,
                                  const std::optional<Time>& update_time_ms) {
-  CHECK(!isHumanMapping(mapping_type_))
-      << "Only use this function for static or dynamic mapping. For human "
-         "mapping please pass a mask to integrateDepth.";
-
-  if (mapping_type_ == MappingType::kDynamic) {
+  if (isDynamicMapping(mapping_type_)) {
     CHECK(update_time_ms);
     unmasked_mapper_->updateFreespace(update_time_ms.value());
     dynamic_detector_.computeDynamics(
@@ -156,10 +144,15 @@ void MultiMapper::integrateDepth(const DepthImage& depth_frame,
   CHECK(isHumanMapping(mapping_type_))
       << "Passing a mask to integrateDepth is only valid for human mapping.";
 
+  // Remove small components (assumed to be noise) from the mask
+  image::removeSmallConnectedComponents(
+      mask, params_.connected_mask_component_size_threshold,
+      &cleaned_semantic_mask_, *cuda_stream_);
+
   // Split masked and non masked depth frame
-  image_masker_.splitImageOnGPU(depth_frame, mask, T_CM_CD, depth_camera,
-                                mask_camera, &depth_frame_unmasked_,
-                                &depth_frame_masked_, &masked_depth_overlay_);
+  image_masker_.splitImageOnGPU(
+      depth_frame, cleaned_semantic_mask_, T_CM_CD, depth_camera, mask_camera,
+      &depth_frame_unmasked_, &depth_frame_masked_, &masked_depth_overlay_);
 
   // Integrate the frames to the respective layer cake
   unmasked_mapper_->integrateDepth(depth_frame_unmasked_, T_L_CD, depth_camera);
@@ -168,9 +161,6 @@ void MultiMapper::integrateDepth(const DepthImage& depth_frame,
 
 void MultiMapper::integrateColor(const ColorImage& color_frame,
                                  const Transform& T_L_C, const Camera& camera) {
-  CHECK(!isHumanMapping(mapping_type_))
-      << "Only use this function for static or dynamic mapping. For human "
-         "mapping please pass a mask to integrateColor.";
   // TODO(remos): For kDynamic we should split the image and only integrate
   // unmasked pixels. As the dynamic mask is not a direct overlay of the color
   // image, this requires implementing a new splitImageOnGPU for color
@@ -189,9 +179,16 @@ void MultiMapper::integrateColor(const ColorImage& color_frame,
     return;
   }
 
+  // Remove small components (assumed to be noise) from the mask
+  // We do this again incase the mask is not synced with the depth mask
+  image::removeSmallConnectedComponents(
+      mask, params_.connected_mask_component_size_threshold,
+      &cleaned_semantic_mask_, *cuda_stream_);
+
   // Split masked and non masked color frame
-  image_masker_.splitImageOnGPU(color_frame, mask, &color_frame_unmasked_,
-                                &color_frame_masked_, &masked_color_overlay_);
+  image_masker_.splitImageOnGPU(color_frame, cleaned_semantic_mask_,
+                                &color_frame_unmasked_, &color_frame_masked_,
+                                &masked_color_overlay_);
 
   // Integrate the frames to the respective layer cake
   masked_mapper_->integrateColor(color_frame_masked_, T_L_C, camera);
@@ -206,10 +203,12 @@ void MultiMapper::updateEsdf() {
   }
 }
 
-std::vector<Index3D> MultiMapper::updateMesh() {
+std::shared_ptr<const SerializedMesh> MultiMapper::updateMesh(
+    const std::optional<Transform>& maybe_T_L_C, bool serialize_full_mesh) {
   // At the moment we never have a mesh for the masked mapper as it alway uses a
   // occupancy layer.
-  return unmasked_mapper_->updateMesh();
+  return unmasked_mapper_->updateMesh(UpdateFullLayer::kNo, maybe_T_L_C,
+                                      serialize_full_mesh);
 }
 
 const DepthImage& MultiMapper::getLastDepthFrameUnmasked() {
@@ -246,9 +245,7 @@ void MultiMapper::updateEsdfOfMapper(const std::shared_ptr<Mapper>& mapper) {
       mapper->updateEsdf();
       break;
     case EsdfMode::k2D:
-      mapper->updateEsdfSlice(params_.esdf_2d_min_height,
-                              params_.esdf_2d_max_height,
-                              params_.esdf_slice_height);
+      mapper->updateEsdfSlice();
       break;
   }
 }
@@ -258,15 +255,11 @@ parameters::ParameterTreeNode MultiMapper::getParameterTree(
   using parameters::ParameterTreeNode;
   const std::string name = (name_remap.empty()) ? "multi_mapper" : name_remap;
   return ParameterTreeNode(
-      name,
-      {ParameterTreeNode("esdf_2d_min_height", params_.esdf_2d_min_height),
-       ParameterTreeNode("esdf_2d_max_height", params_.esdf_2d_max_height),
-       ParameterTreeNode("esdf_slice_height", params_.esdf_slice_height),
-       ParameterTreeNode("connected_mask_component_size_threshold",
-                         params_.connected_mask_component_size_threshold),
-       unmasked_mapper_->getParameterTree("unmasked_mapper"),
-       masked_mapper_->getParameterTree("masked_mapper"),
-       image_masker_.getParameterTree()});
+      name, {ParameterTreeNode("connected_mask_component_size_threshold",
+                               params_.connected_mask_component_size_threshold),
+             unmasked_mapper_->getParameterTree("unmasked_mapper"),
+             masked_mapper_->getParameterTree("masked_mapper"),
+             image_masker_.getParameterTree()});
 }
 
 std::string MultiMapper::getParametersAsString() const {

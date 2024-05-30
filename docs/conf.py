@@ -19,7 +19,8 @@ source_parsers = {
 }
 
 extensions = [
-    'sphinx.ext.autosectionlabel'
+    'sphinx.ext.autosectionlabel',
+    'sphinx.builders.linkcheck',
 ]
 
 project = name

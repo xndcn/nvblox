@@ -336,8 +336,8 @@ TEST_P(SphereTracingInSphereSceneTest, SphereSceneTests) {
                                       &depth_frame_gt);
 
     // Error image
-    image::getDifferenceImageGPU(depth_image_sphere_traced, depth_frame_gt,
-                                 &diff);
+    image::getDifferenceImageGPUAsync(depth_image_sphere_traced, depth_frame_gt,
+                                      &diff, CudaStreamOwning());
 
     // Count the number of error pixels.
     // NOTE(alexmillane): We ignore rays that do not converge (this occurs in

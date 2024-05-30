@@ -62,7 +62,8 @@ TEST(ColorImageTest, NearbyImagesSimilar) {
 
   // Compute the diff image on the GPU
   ColorImage diff_image(MemoryType::kDevice);
-  image::getDifferenceImageGPU(image_1, image_2, &diff_image);
+  image::getDifferenceImageGPUAsync(image_1, image_2, &diff_image,
+                                    CudaStreamOwning());
 
   // Write diff image
   io::writeToPng("./color_image_difference.png", diff_image);

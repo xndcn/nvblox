@@ -17,7 +17,15 @@ limitations under the License.
 
 #include <memory>
 
+#include <thrust/pair.h>
+
+#include "nvblox/core/cuda_stream.h"
+#include "nvblox/core/unified_vector.h"
+
 namespace nvblox {
+
+template <typename BlockType>
+using IndexBlockPair = thrust::pair<Index3D, BlockType*>;
 
 template <typename BlockType>
 class GPUHashImpl;
@@ -42,6 +50,7 @@ class GPULayerView {
   ~GPULayerView();
 
   // Creates a new GPULayerView from a layer
+  void reset(LayerType* layer_ptr, const CudaStream& cuda_stream);
   void reset(LayerType* layer_ptr);
 
   // Resizes the underlying GPU hash as well as deleting its contents
@@ -72,6 +81,9 @@ class GPULayerView {
   // NOTE(alexmillane): To keep GPU code out of the header we use PIMPL to hide
   // the details of the GPU hash.
   std::shared_ptr<GPUHashImpl<BlockType>> gpu_hash_ptr_;
+
+  // Used for staging when transferring the gpu hash
+  device_vector<IndexBlockPair<BlockType>> scratch_block_vector_device_;
 };
 
 }  // namespace nvblox
@@ -83,4 +95,4 @@ class GPULayerView {
 // - The problem is that we don't want the GPULayerView implementation, which
 //   contains CUDA calls and stdgpu code, bleeding into into layer.h, one of our
 //   main interace headers.
-//#include "nvblox/gpu_hash/internal/cuda/impl/gpu_layer_view_impl.cuh"
+// #include "nvblox/gpu_hash/internal/cuda/impl/gpu_layer_view_impl.cuh"

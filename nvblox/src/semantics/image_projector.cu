@@ -100,19 +100,20 @@ void DepthImageBackProjector::pointcloudToVoxelCentersOnGPU(
 
   // Create an array of voxel centers matching the nearest voxel for each point.
   voxel_center_pointcloud_L->resize(pointcloud_L.size());
-  thrust::transform(thrust::device, pointcloud_L.points().begin(),
-                    pointcloud_L.points().end(),
+  thrust::transform(thrust::device.on(*cuda_stream_),
+                    pointcloud_L.points().begin(), pointcloud_L.points().end(),
                     voxel_center_pointcloud_L->points().begin(),
                     GetVoxelCenter(voxel_size));
 
   // Sort points to bring duplicates together.
-  thrust::sort(thrust::device, voxel_center_pointcloud_L->points().begin(),
+  thrust::sort(thrust::device.on(*cuda_stream_),
+               voxel_center_pointcloud_L->points().begin(),
                voxel_center_pointcloud_L->points().end(),
                VectorCompare<Vector3f>());
 
   // Find unique points and erase redundancies. The iterator will point to
   // the new last index.
-  auto iterator = thrust::unique(thrust::device,
+  auto iterator = thrust::unique(thrust::device.on(*cuda_stream_),
                                  voxel_center_pointcloud_L->points().begin(),
                                  voxel_center_pointcloud_L->points().end());
 

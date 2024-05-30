@@ -62,7 +62,7 @@ class ViewCalculator {
   /// @param max_integration_distance_behind_surface_m The truncation distance.
   /// @param max_integration_distance_m The max integration distance.
   /// @return a vector of the 3D indices of the blocks in view.
-  static std::vector<Index3D> getBlocksInImageViewPlanes(
+  std::vector<Index3D> getBlocksInImageViewPlanes(
       const DepthImage& depth_frame, const Transform& T_L_C,
       const Camera& camera, const float block_size,
       const float max_integration_distance_behind_surface_m,

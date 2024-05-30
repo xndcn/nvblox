@@ -102,17 +102,19 @@ void DynamicsDetection::computeDynamics(const DepthImage& depth_frame_C,
                         rows / kThreadsPerThreadBlock.y + 1, 1);
   findDynamicPointsKernel<<<num_blocks, kThreadsPerThreadBlock, 0,
                             *cuda_stream_>>>(
-      depth_frame_C.dataConstPtr(),                         // NOLINT
-      freespace_layer_L.getGpuLayerView().getHash().impl_,  // NOLINT
-      freespace_layer_L.block_size(),                       // NOLINT
-      T_L_C,                                                // NOLINT
-      camera,                                               // NOLINT
-      rows,                                                 // NOLINT
-      cols,                                                 // NOLINT
-      dynamic_points_counter_device_.get(),                 // NOLINT
-      dynamic_points_device_.data(),                        // NOLINT
-      dynamics_mask_.dataPtr(),                             // NOLINT
-      dynamics_overlay_.dataPtr());                         // NOLINT
+      depth_frame_C.dataConstPtr(),  // NOLINT
+      freespace_layer_L.getGpuLayerViewAsync(*cuda_stream_)
+          .getHash()
+          .impl_,                            // NOLINT
+      freespace_layer_L.block_size(),        // NOLINT
+      T_L_C,                                 // NOLINT
+      camera,                                // NOLINT
+      rows,                                  // NOLINT
+      cols,                                  // NOLINT
+      dynamic_points_counter_device_.get(),  // NOLINT
+      dynamic_points_device_.data(),         // NOLINT
+      dynamics_mask_.dataPtr(),              // NOLINT
+      dynamics_overlay_.dataPtr());          // NOLINT
   dynamic_points_counter_device_.copyToAsync(dynamic_points_counter_host_,
                                              *cuda_stream_);
   cuda_stream_->synchronize();
@@ -158,14 +160,16 @@ void DynamicsDetection::prepareOutputs(const DepthImage& input_frame) {
   // Mask
   if ((dynamics_mask_.rows() != input_frame.rows()) ||
       (dynamics_mask_.cols() != input_frame.cols()) ||
-      dynamics_mask_.memory_type() == input_frame.memory_type()) {
+      dynamics_mask_.memory_type() != input_frame.memory_type()) {
+    LOG(INFO) << "Allocating MonoImage for dynamics mask";
     dynamics_mask_ = MonoImage(rows, cols, input_frame.memory_type());
   }
 
   // Overlay
   if ((dynamics_overlay_.rows() != input_frame.rows()) ||
       (dynamics_overlay_.cols() != input_frame.cols()) ||
-      dynamics_overlay_.memory_type() == input_frame.memory_type()) {
+      dynamics_overlay_.memory_type() != input_frame.memory_type()) {
+    LOG(INFO) << "Allocating ColorImage for dynamics overlay";
     dynamics_overlay_ = ColorImage(rows, cols, input_frame.memory_type());
   }
 

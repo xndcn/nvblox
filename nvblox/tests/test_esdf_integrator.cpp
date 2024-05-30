@@ -761,7 +761,8 @@ TEST_P(EsdfIntegratorTest, ComplexSceneWithTsdf) {
   }
 
   // Actually run the ESDF generation.
-  esdf_integrator_.integrateLayer(*tsdf_layer_, esdf_layer_.get());
+  esdf_integrator_.integrateBlocks(
+      *tsdf_layer_, tsdf_layer_->getAllBlockIndices(), esdf_layer_.get());
 
   // Compare the results to GT.
   // Allow within 1 voxel sizes.
@@ -862,7 +863,8 @@ TEST_P(EsdfIntegratorTest, IncrementalTsdfAndEsdfWithObjectRemovalGPU) {
   }
 
   // Run batch ESDF generation to compare to.
-  esdf_integrator_.integrateLayer(*tsdf_layer_, &esdf_layer_batch);
+  esdf_integrator_.integrateBlocks(
+      *tsdf_layer_, tsdf_layer_->getAllBlockIndices(), &esdf_layer_batch);
 
   // Compare results to each other. Should really be basically identical.
   EXPECT_LE(compareEsdfToEsdf(*esdf_layer_, esdf_layer_batch, voxel_size_),
@@ -926,7 +928,8 @@ TEST_P(EsdfIntegratorTest, IncrementalEsdf2DWithObjectRemoval) {
   }
 
   // Run batch ESDF generation to compare to.
-  esdf_integrator_.integrateLayer(*tsdf_layer_, &esdf_layer_batch);
+  esdf_integrator_.integrateBlocks(
+      *tsdf_layer_, tsdf_layer_->getAllBlockIndices(), &esdf_layer_batch);
 
   // Compare results to each other. Should really be basically identical.
   EXPECT_LE(compareEsdfToEsdf(*esdf_layer_, esdf_layer_batch, voxel_size_),
@@ -1004,7 +1007,8 @@ TEST_P(EsdfIntegratorTest, IncrementalEsdfSliceWithObjectRemovalGPU) {
   }
 
   // Run batch ESDF generation to compare to.
-  esdf_integrator_.integrateLayer(*tsdf_layer_, &esdf_layer_batch);
+  esdf_integrator_.integrateBlocks(
+      *tsdf_layer_, tsdf_layer_->getAllBlockIndices(), &esdf_layer_batch);
 
   // Compare results to each other. Should really be basically identical.
   const float kAcceptableTsdfErrorM = voxel_size_;
@@ -1076,7 +1080,8 @@ TEST_P(EsdfIntegratorTest, IncrementalEsdfWithObjectRemoval) {
   }
 
   // Run batch ESDF generation to compare to.
-  esdf_integrator_.integrateLayer(*tsdf_layer_, &esdf_layer_batch);
+  esdf_integrator_.integrateBlocks(
+      *tsdf_layer_, tsdf_layer_->getAllBlockIndices(), &esdf_layer_batch);
 
   // Compare results to each other. Should really be basically identical.
   EXPECT_LE(compareEsdfToEsdf(*esdf_layer_, esdf_layer_batch, voxel_size_),

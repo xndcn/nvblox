@@ -12,7 +12,10 @@ The integrators currently offered can be split into two types:
 The API for the currently available integrators are here:
 
 * [TsdfIntegrator](@ref nvblox::ProjectiveTsdfIntegrator)
+* [OccupancyIntegrator](@ref nvblox::ProjectiveOccupancyIntegrator)
 * [ColorIntegrator](@ref nvblox::ProjectiveColorIntegrator)
 * [EsdfIntegrator](@ref nvblox::EsdfIntegrator)
 * [MeshIntegrator](@ref nvblox::MeshIntegrator)
-
+* [FreespaceIntegrator](@ref nvblox::FreespaceIntegrator)
+* [TsdfDecayIntegrator](@ref nvblox::TsdfDecayIntegrator)
+* [OccupancyDecayIntegrator](@ref nvblox::OccupancyDecayIntegrator)

@@ -1,6 +1,16 @@
 cmake_minimum_required(VERSION 3.22.1)
 
-# set the project name and version
+
+# By default we build for the native cuda architecture. Customize by passing
+# '-DCMAKE_CUDA_ARCHITECTURES=89;75;72' to cmake.
+if (DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES_SET_EXTERNALLY TRUE)
+else()
+  set(CMAKE_CUDA_ARCHITECTURES_SET_EXTERNALLY FALSE)
+endif()
+
+# Set the project name and version. Note that this will also set CMAKE_CUDA_ARCHITECTURES to a
+# default (potentially non-native) value
 project(nvblox VERSION 0.0.4 LANGUAGES CXX CUDA)
 
 ########################
@@ -22,29 +32,24 @@ set(SQLITE3_BASE_PATH "" CACHE STRING "Base path to static output for Sqlite3, b
 set(GLOG_BASE_PATH "" CACHE STRING "Base path to static output for glog, build with -fPIC.")
 set(GFLAGS_BASE_PATH "" CACHE STRING "Base path to static output for gflags, build with -fPIC.")
 
-include(cmake/setup_compilers.cmake)
-
-
-
-
-
-
 ################
 # DEPENDENCIES #
 ################
+
+# Include package deps
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+find_package(CUDAToolkit REQUIRED)
+
+# Setup options for nvcc and gcc
+include(cmake/setup_compilers.cmake)
+
 # Download thirdparty deps
 message(STATUS "Downloading 3rdparty dependencies")
 message(STATUS "Downloading Eigen")
 include(thirdparty/eigen/eigen.cmake)
-
-# Build stdgpu as part of this
 message(STATUS "Downloading STDGPU")
 include(thirdparty/stdgpu/stdgpu.cmake)
 
-# Include dem deps
-list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
-find_package(CUDA REQUIRED)
-find_package(CUDAToolkit)
 
 # Treat redistributable and non-redistributable builds differently for
 # the other dependencies.
@@ -141,6 +146,7 @@ add_library(nvblox_lib SHARED
     src/core/error_check.cu
     src/core/parameter_tree.cpp
     src/dynamics/dynamics_detection.cu
+    src/map/blocks_to_update_tracker.cpp
     src/map/blox.cu
     src/map/layer.cu
     src/sensors/connected_components.cpp
@@ -155,6 +161,7 @@ add_library(nvblox_lib SHARED
     src/mapper/mapper.cpp
     src/mapper/multi_mapper.cpp
     src/integrators/view_calculator.cu
+    src/integrators/decay_integrator_base.cpp
     src/integrators/occupancy_decay_integrator.cu
     src/integrators/tsdf_decay_integrator.cu
     src/integrators/projective_occupancy_integrator.cu
@@ -170,6 +177,9 @@ add_library(nvblox_lib SHARED
     src/io/layer_cake_io.cpp
     src/io/pointcloud_io.cpp
     src/io/image_io.cpp
+    src/map_saving/serializer.cpp
+    src/map_saving/sqlite_database.cpp
+    src/map_saving/layer_type_register.cpp
     src/mesh/mesh_block.cu
     src/mesh/mesh_integrator_color.cu
     src/mesh/mesh_integrator.cu
@@ -180,10 +190,10 @@ add_library(nvblox_lib SHARED
     src/utils/nvtx_ranges.cpp
     src/utils/timing.cpp
     src/utils/rates.cpp
-    src/serialization/serializer.cpp
-    src/serialization/mesh_serializer.cu
-    src/serialization/sqlite_database.cpp
-    src/serialization/layer_type_register.cpp
+    src/utils/delays.cpp
+    src/serialization/mesh_serializer_gpu.cu
+    src/serialization/serialization_gpu.cu
+    src/serialization/mesh_serializer_gpu.cu
     src/semantics/image_masker.cu
     src/semantics/image_projector.cu
 )
@@ -213,10 +223,10 @@ target_include_directories(nvblox_lib PUBLIC
 
 set_target_properties(nvblox_lib PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
 
-if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.18)
-    set_property(TARGET nvblox_lib APPEND PROPERTY CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES})
-    set_property(TARGET nvblox_lib APPEND PROPERTY EXPORT_PROPERTIES CUDA_ARCHITECTURES)
-endif()
+set_property(TARGET nvblox_lib APPEND PROPERTY CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES})
+set_property(TARGET nvblox_lib APPEND PROPERTY EXPORT_PROPERTIES ${CMAKE_CUDA_ARCHITECTURES})
+
+
 
 set_property(TARGET nvblox_lib PROPERTY CMAKE_CUDA_FLAGS ${CMAKE_CUDA_FLAGS})
 set_property(TARGET nvblox_lib APPEND PROPERTY EXPORT_PROPERTIES CMAKE_CUDA_FLAGS)

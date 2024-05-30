@@ -41,7 +41,8 @@ TEST(ImageIO, SaveToPng) {
   EXPECT_TRUE(io::readFromPng(filepath, &mono_image_readback));
 
   MonoImage diff_image(MemoryType::kUnified);
-  image::getDifferenceImageGPU(mono_image, mono_image_readback, &diff_image);
+  image::getDifferenceImageGPUAsync(mono_image, mono_image_readback,
+                                    &diff_image, CudaStreamOwning());
 
   EXPECT_EQ(diff_image(0, 0), 0);
   EXPECT_EQ(diff_image(0, 1), 0);
@@ -92,7 +93,8 @@ TEST(ImageIO, 3DMatchColorImageLoadAndSave) {
   // Check difference
   ColorImage diff_image(color_image.rows(), color_image.cols(),
                         MemoryType::kUnified);
-  image::getDifferenceImageGPU(color_image, image_readback, &diff_image);
+  image::getDifferenceImageGPUAsync(color_image, image_readback, &diff_image,
+                                    CudaStreamOwning());
   for (int row_idx = 0; row_idx < color_image.rows(); row_idx++) {
     for (int col_idx = 0; col_idx < color_image.cols(); col_idx++) {
       const Color el = diff_image(row_idx, col_idx);

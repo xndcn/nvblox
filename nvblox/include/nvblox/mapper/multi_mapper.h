@@ -27,20 +27,27 @@ enum class MappingType {
   kHumanWithStaticOccupancy  /// static occupancy and human occupancy
 };
 
-/// Whether the masked mapper is used for dynamic/human mapping
-inline bool isUsingDynamicMapper(MappingType mapping_type) {
-  if (mapping_type == MappingType::kDynamic ||
-      mapping_type == MappingType::kHumanWithStaticTsdf ||
+/// Whether the masked mapper is used for human mapping
+inline bool isHumanMapping(MappingType mapping_type) {
+  if (mapping_type == MappingType::kHumanWithStaticTsdf ||
       mapping_type == MappingType::kHumanWithStaticOccupancy) {
     return true;
   }
   return false;
 }
 
-/// Whether the masked mapper is used for human mapping
-inline bool isHumanMapping(MappingType mapping_type) {
-  if (mapping_type == MappingType::kHumanWithStaticTsdf ||
-      mapping_type == MappingType::kHumanWithStaticOccupancy) {
+/// Whether the masked mapper is used for dynamic mapping
+inline bool isDynamicMapping(MappingType mapping_type) {
+  if (mapping_type == MappingType::kDynamic) {
+    return true;
+  }
+  return false;
+}
+
+/// Whether both the unmasked and masked mapper are active,
+/// i.e. the masked mapper is used for dynamic/human mapping
+inline bool isUsingBothMappers(MappingType mapping_type) {
+  if (isHumanMapping(mapping_type) || isDynamicMapping(mapping_type)) {
     return true;
   }
   return false;
@@ -55,7 +62,8 @@ inline bool isStaticOccupancy(MappingType mapping_type) {
   return false;
 }
 
-inline std::string toString(MappingType mapping_type) {
+template <>
+inline std::string toString(const MappingType& mapping_type) {
   switch (mapping_type) {
     case MappingType::kStaticTsdf:
       return "kStaticTsdf";
@@ -86,33 +94,40 @@ inline std::string toString(MappingType mapping_type) {
 /// - unmasked mapper: Handling static objects with a tsdf or a occupancy layer.
 ///                    Also updating a freespace layer if mapping type is
 ///                    kDynamic.
+///
+/// NOTE(remos): For dynamic mapping the full depth image is integrated into the
+/// unmasked mapper (no masking). Otherwise freespace can not be reset as depth
+/// measurements falling into the freespace will always be masked dynamic by the
+/// DynamicsDetection module.
+/// As a consequence, we need to ignore the esdf sites in the unmasked mapper
+/// that fall into freespace because they are actually dynamic and handled by
+/// the masked mapper.
 class MultiMapper {
  public:
-  static constexpr bool kDefaultEsdf2dMinHeight = 0.0f;
-  static constexpr bool kDefaultEsdf2dMaxHeight = 1.0f;
-  static constexpr bool kDefaultEsdf2dSliceHeight = 1.0f;
   static constexpr int kDefaultConnectedMaskComponentSizeThreshold = 2000;
 
   struct Params {
-    /// The minimum height, in meters, to consider obstacles part of the 2D ESDF
-    /// slice.
-    float esdf_2d_min_height = kDefaultEsdf2dMinHeight;
-    /// The maximum height, in meters, to consider obstacles part of the 2D ESDF
-    /// slice.
-    float esdf_2d_max_height = kDefaultEsdf2dMaxHeight;
-    /// The output slice height for the distance slice and ESDF pointcloud. Does
-    /// not need to be within min and max height below. In units of meters.
-    float esdf_slice_height = kDefaultEsdf2dSliceHeight;
     /// The minimum number of pixels of a connected component in the mask image
     /// to count as a dynamic detection.
     int connected_mask_component_size_threshold =
         kDefaultConnectedMaskComponentSizeThreshold;
   };
 
-  MultiMapper(
-      float voxel_size_m, MappingType mapping_type, EsdfMode esdf_mode,
-      MemoryType memory_type = MemoryType::kDevice,
-      std::shared_ptr<CudaStream> = std::make_shared<CudaStreamOwning>());
+  /// @param voxel_size_m The voxel size in meters for the contained layers.
+  /// @param projective_layer_type The layer type to which the projective
+  ///        data is integrated (either tsdf or occupancy).
+  /// @param memory_type In which type of memory the layers should be stored.
+
+  /// Constructor
+  /// @param voxel_size_m The voxel size in meters for the contained layers.
+  /// @param mapping_type Static, Dynamic etc. See MappingType.
+  /// @param esdf_mode 2D or 3D. See EsdfMode.
+  /// @param memory_type In which type of memory the layers should be stored.
+  /// @param cuda_stream Optional cuda stream to perform all work on.
+  MultiMapper(float voxel_size_m, MappingType mapping_type, EsdfMode esdf_mode,
+              MemoryType memory_type = MemoryType::kDevice,
+              std::shared_ptr<CudaStream> cuda_stream =
+                  std::make_shared<CudaStreamOwning>());
   ~MultiMapper() = default;
 
   /// @brief Setting the multi mapper param struct
@@ -180,17 +195,24 @@ class MultiMapper {
 
   /// @brief Updating the mesh layers of the mappers depending on the mapping
   /// type.
-  /// @return The indices of the blocks that were updated in this call.
-  std::vector<Index3D> updateMesh();
+  /// @return A serialized mesh. If mesh_bandwidth_limit_mbps is positive,
+  ///         the size of the mesh is limited based on estimated
+  ///         bandwidth capacity.
+  std::shared_ptr<const SerializedMesh> updateMesh(
+      const std::optional<Transform>& maybe_T_L_C = std::nullopt,
+      bool serialize_full_mesh = false);
 
-  // Access to the internal mappers
+  /// Access to one of the mappers
   const Mapper& unmasked_mapper() const { return *unmasked_mapper_.get(); }
+  /// Access to one of the mappers
   const Mapper& masked_mapper() const { return *masked_mapper_.get(); }
+  /// Access to one of the mappers
   std::shared_ptr<Mapper>& unmasked_mapper() { return unmasked_mapper_; }
+  /// Access to one of the mappers
   std::shared_ptr<Mapper>& masked_mapper() { return masked_mapper_; }
 
-  // These functions return a reference to the masked images generated during
-  // the preceeding calls to integrateColor() and integrateDepth().
+  /// These functions return a reference to the masked images generated during
+  /// the preceeding calls to integrateColor() and integrateDepth().
   const DepthImage& getLastDepthFrameUnmasked();
   const DepthImage& getLastDepthFrameMasked();
   const ColorImage& getLastColorFrameUnmasked();
@@ -223,6 +245,9 @@ class MultiMapper {
   // Helper to detect dynamics from a freespace layer
   DynamicsDetection dynamic_detector_;
   MonoImage cleaned_dynamic_mask_{MemoryType::kDevice};
+
+  // Declared to use for cleaning up of semantic mask
+  MonoImage cleaned_semantic_mask_{MemoryType::kDevice};
 
   // Split depth images based on a mask.
   // Note that we internally pre-allocate space for the split images on the

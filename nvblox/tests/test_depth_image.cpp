@@ -93,9 +93,9 @@ TEST_F(DepthImageTest, DeviceReduction) {
   depth_frame_(u_min.y(), u_min.x()) = kMinValue;
 
   // Reduction on the GPU
-  const float max = image::maxGPU(depth_frame_);
-  const float min = image::minGPU(depth_frame_);
-  const auto minmax = image::minmaxGPU(depth_frame_);
+  const float max = image::maxGPU(depth_frame_, CudaStreamOwning());
+  const float min = image::minGPU(depth_frame_, CudaStreamOwning());
+  const auto minmax = image::minmaxGPU(depth_frame_, CudaStreamOwning());
 
   // Check on the CPU
   EXPECT_EQ(max, kMaxValue);
@@ -110,16 +110,16 @@ TEST_F(DepthImageTest, GpuOperation) {
   setImageConstantOnCpu(kPixelValue, &depth_frame_);
 
   // Element wise min
-  image::elementWiseMinInPlaceGPU(0.5f, &depth_frame_);
+  image::elementWiseMinInPlaceGPUAsync(0.5f, &depth_frame_, CudaStreamOwning());
 
   // Reduction on the GPU
-  const float max = image::maxGPU(depth_frame_);
+  const float max = image::maxGPU(depth_frame_, CudaStreamOwning());
   EXPECT_EQ(max, 0.5f);
 
   // Element wise max
-  image::elementWiseMaxInPlaceGPU(1.5f, &depth_frame_);
+  image::elementWiseMaxInPlaceGPUAsync(1.5f, &depth_frame_, CudaStreamOwning());
 
-  const float min = image::minGPU(depth_frame_);
+  const float min = image::minGPU(depth_frame_, CudaStreamOwning());
   EXPECT_EQ(min, 1.5f);
 }
 
@@ -267,7 +267,8 @@ TEST_F(DepthImageTest, DifferenceImage) {
 
   DepthImage diff_image{MemoryType::kDevice};
 
-  image::getDifferenceImageGPU(image_1, image_2, &diff_image);
+  image::getDifferenceImageGPUAsync(image_1, image_2, &diff_image,
+                                    CudaStreamOwning());
 
   // Check the function allocated the output
   EXPECT_EQ(diff_image.rows(), 2);
@@ -287,7 +288,8 @@ TEST_F(DepthImageTest, ImageMultiplication) {
   image(1, 0) = 3.0f;
   image(1, 1) = 4.0f;
 
-  image::elementWiseMultiplicationInPlaceGPU(2.0f, &image);
+  image::elementWiseMultiplicationInPlaceGPUAsync(2.0f, &image,
+                                                  CudaStreamOwning());
 
   // Check the difference actually worked.
   EXPECT_NEAR(image(0, 0), 2.0f, kFloatEpsilon);
@@ -304,7 +306,7 @@ TEST_F(DepthImageTest, ImageCast) {
   image(1, 1) = 4.1f;
 
   MonoImage image_out(MemoryType::kDevice);
-  image::castGPU(image, &image_out);
+  image::castGPUAsync(image, &image_out, CudaStreamOwning());
 
   EXPECT_EQ(image_out(0, 0), 1);
   EXPECT_EQ(image_out(0, 1), 2);
@@ -447,7 +449,7 @@ TEST_F(DepthImageTest, ElementWiseBinaryOps) {
   image_2(1, 0) = 1;
   image_2(1, 1) = 1;
 
-  image::elementWiseMaxInPlaceGPU(image_1, &image_2);
+  image::elementWiseMaxInPlaceGPUAsync(image_1, &image_2, CudaStreamOwning());
 
   EXPECT_EQ(image_2(0, 0), 0);
   EXPECT_EQ(image_2(0, 1), 1);
@@ -460,12 +462,32 @@ TEST_F(DepthImageTest, ElementWiseBinaryOps) {
   image_3(1, 0) = 1;
   image_3(1, 1) = 1;
 
-  image::elementWiseMinInPlaceGPU(image_1, &image_3);
+  image::elementWiseMinInPlaceGPUAsync(image_1, &image_3, CudaStreamOwning());
 
   EXPECT_EQ(image_3(0, 0), 0);
   EXPECT_EQ(image_3(0, 1), 0);
   EXPECT_EQ(image_3(1, 0), 0);
   EXPECT_EQ(image_3(1, 1), 1);
+}
+
+TEST_F(DepthImageTest, CopyToBuffer) {
+  MonoImage image_1(2, 2, MemoryType::kUnified);
+  image_1(0, 0) = 0;
+  image_1(0, 1) = 1;
+  image_1(1, 0) = 0;
+  image_1(1, 1) = 1;
+
+  uint8_t buffer[4];
+
+  image_1.copyTo(buffer);
+
+  MonoImage image_2(MemoryType::kUnified);
+  image_2.copyFrom(2, 2, buffer);
+
+  EXPECT_EQ(image_2(0, 0), 0);
+  EXPECT_EQ(image_2(0, 1), 1);
+  EXPECT_EQ(image_2(1, 0), 0);
+  EXPECT_EQ(image_2(1, 1), 1);
 }
 
 int main(int argc, char** argv) {

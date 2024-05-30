@@ -15,7 +15,7 @@ limitations under the License.
 */
 #include "nvblox/utils/logging.h"
 
-#include "nvblox/serialization/internal/serializer.h"
+#include "nvblox/map_saving/internal/serializer.h"
 
 namespace nvblox {
 namespace io {

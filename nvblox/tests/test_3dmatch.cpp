@@ -83,8 +83,8 @@ TEST_F(Dataset3DMatchTest, LoadImage) {
   EXPECT_EQ(image.rows(), 480);
   EXPECT_EQ(image.cols(), 640);
 
-  EXPECT_NEAR(image::minGPU(image), 0.0, kTolerance);
-  EXPECT_NEAR(image::maxGPU(image), 7.835, kTolerance);
+  EXPECT_NEAR(image::minGPU(image, CudaStreamOwning()), 0.0, kTolerance);
+  EXPECT_NEAR(image::maxGPU(image, CudaStreamOwning()), 7.835, kTolerance);
 }
 
 enum class LoaderType { kSingleThreaded, kMultiThreaded };
@@ -118,13 +118,15 @@ TEST_P(LoaderParameterizedTest, ImageLoaderObject) {
 
   EXPECT_EQ(depth_image_1.rows(), 480);
   EXPECT_EQ(depth_image_1.cols(), 640);
-  EXPECT_NEAR(image::minGPU(depth_image_1), 0.0, kTolerance);
-  EXPECT_NEAR(image::maxGPU(depth_image_1), 7.835, kTolerance);
+  EXPECT_NEAR(image::minGPU(depth_image_1, CudaStreamOwning()), 0.0,
+              kTolerance);
+  EXPECT_NEAR(image::maxGPU(depth_image_1, CudaStreamOwning()), 7.835,
+              kTolerance);
 }
 
+// TODO(dtingdahl) Re-enable multi-threading when it is supported again
 INSTANTIATE_TEST_CASE_P(LoaderTests, LoaderParameterizedTest,
-                        ::testing::Values(LoaderType::kSingleThreaded,
-                                          LoaderType::kMultiThreaded));
+                        ::testing::Values(LoaderType::kSingleThreaded));
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
