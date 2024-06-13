@@ -29,25 +29,36 @@ class Lidar {
   /// around zero.
   /// @param num_azimuth_divisions Number of samples per rotation for each beam.
   /// @param num_elevation_divisions Number of samples in azimuth per beam.
+  /// @param min_valid_range_m Minimum valid range value in meters.
+  /// @param max_valid_range_m Maximum valid range value in meters.
   /// @param vertical_fov_rad The angular distance in elevation between the top
   /// and bottom beam.
   __host__ __device__ inline Lidar(int num_azimuth_divisions,
                                    int num_elevation_divisions,
+                                   float min_valid_range_m,
+                                   float max_valid_range_m,
                                    float vertical_fov_rad);
   /// LiDAR constructor. This constructor does not assume beams distributed
   /// evenly around zero. If you have evenly distributed beams use the
   /// constructor above.
   /// @param num_azimuth_divisions Number of samples per rotation for each beam.
   /// @param num_elevation_divisions Number of samples in azimuth per beam.
+  /// @param min_valid_range_m Minimum valid range value in meters.
+  /// @param max_valid_range_m Minimum valid range value in meters.
   /// @param min_angle_below_zero_elevation_rad The angle below zero of the
   /// lowest beam (specified as a positive number).
   /// @param max_angle_above_zero_elevation_rad The angle above zero of the
   /// highest beam (specified as a positive number).
   __host__ __device__ inline Lidar(int num_azimuth_divisions,
                                    int num_elevation_divisions,
+                                   float min_valid_range_m,
+                                   float max_valid_range_m,
                                    float min_angle_below_zero_elevation_rad,
                                    float max_angle_above_zero_elevation_rad);
   __host__ __device__ inline ~Lidar() = default;
+
+  /// Returns if the point is in the valid range of the lidar
+  __host__ __device__ inline bool isInValidRange(const Vector3f& p_C) const;
 
   /// Projects a 3D point to the (floating-point) image plane
   __host__ __device__ inline bool project(const Vector3f& p_C,
@@ -87,6 +98,8 @@ class Lidar {
 
   __host__ __device__ inline int num_azimuth_divisions() const;
   __host__ __device__ inline int num_elevation_divisions() const;
+  __host__ __device__ inline float min_valid_range_m() const;
+  __host__ __device__ inline float max_valid_range_m() const;
   __host__ __device__ inline float vertical_fov_rad() const;
   __host__ __device__ inline float start_polar_angle_rad() const;
   __host__ __device__ inline int numel() const;
@@ -105,6 +118,8 @@ class Lidar {
   // Core parameters
   int num_azimuth_divisions_;
   int num_elevation_divisions_;
+  float min_valid_range_m_;
+  float max_valid_range_m_;
   float vertical_fov_rad_;
   float start_polar_angle_rad_;
 
