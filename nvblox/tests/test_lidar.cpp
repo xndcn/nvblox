@@ -41,8 +41,11 @@ TEST_P(ParameterizedLidarTest, Extremes) {
   const int num_elevation_divisions = std::get<1>(params);
   const float vertical_fov_deg = std::get<2>(params);
   const float vertical_fov_rad = vertical_fov_deg * M_PI / 180.0f;
+  const float min_valid_range_m = 0.0f;
+  const float max_valid_range_m = 100.0f;
 
-  Lidar lidar(num_azimuth_divisions, num_elevation_divisions, vertical_fov_rad);
+  Lidar lidar(num_azimuth_divisions, num_elevation_divisions, min_valid_range_m,
+              max_valid_range_m, vertical_fov_rad);
 
   //-------------------
   // Elevation extremes
@@ -120,8 +123,11 @@ TEST_P(ParameterizedLidarTest, SphereTest) {
   const int num_elevation_divisions = std::get<1>(params);
   const float vertical_fov_deg = std::get<2>(params);
   const float vertical_fov_rad = vertical_fov_deg * M_PI / 180.0f;
+  const float min_valid_range_m = 0.0f;
+  const float max_valid_range_m = 100.0f;
 
-  Lidar lidar(num_azimuth_divisions, num_elevation_divisions, vertical_fov_rad);
+  Lidar lidar(num_azimuth_divisions, num_elevation_divisions, min_valid_range_m,
+              max_valid_range_m, vertical_fov_rad);
 
   // Pointcloud
   Eigen::MatrixX3f pointcloud(num_azimuth_divisions * num_elevation_divisions,
@@ -192,8 +198,11 @@ TEST_P(ParameterizedLidarTest, OutOfBoundsTest) {
   const int num_elevation_divisions = std::get<1>(params);
   const float vertical_fov_deg = std::get<2>(params);
   const float vertical_fov_rad = vertical_fov_deg * M_PI / 180.0f;
+  const float min_valid_range_m = 0.0f;
+  const float max_valid_range_m = 100.0f;
 
-  Lidar lidar(num_azimuth_divisions, num_elevation_divisions, vertical_fov_rad);
+  Lidar lidar(num_azimuth_divisions, num_elevation_divisions, min_valid_range_m,
+              max_valid_range_m, vertical_fov_rad);
 
   // Outside on top and bottom
   const float rads_per_pixel_elevation =
@@ -230,8 +239,11 @@ TEST_P(ParameterizedLidarTest, PixelToRayExtremes) {
   const float vertical_fov_deg = std::get<2>(params);
   const float vertical_fov_rad = vertical_fov_deg * M_PI / 180.0f;
   const float half_vertical_fov_rad = vertical_fov_rad / 2.0;
+  const float min_valid_range_m = 0.0f;
+  const float max_valid_range_m = 100.0f;
 
-  Lidar lidar(num_azimuth_divisions, num_elevation_divisions, vertical_fov_rad);
+  Lidar lidar(num_azimuth_divisions, num_elevation_divisions, min_valid_range_m,
+              max_valid_range_m, vertical_fov_rad);
 
   // Special pixels to use
   const float middle_elevation_pixel = (num_elevation_divisions - 1) / 2;
@@ -311,8 +323,11 @@ TEST_P(ParameterizedLidarTest, RandomPixelRoundTrips) {
   const int num_elevation_divisions = std::get<1>(params);
   const float vertical_fov_deg = std::get<2>(params);
   const float vertical_fov_rad = vertical_fov_deg * M_PI / 180.0f;
+  const float min_valid_range_m = 0.0f;
+  const float max_valid_range_m = 100.0f;
 
-  Lidar lidar(num_azimuth_divisions, num_elevation_divisions, vertical_fov_rad);
+  Lidar lidar(num_azimuth_divisions, num_elevation_divisions, min_valid_range_m,
+              max_valid_range_m, vertical_fov_rad);
 
   // Test a large number of points
   const int kNumberOfPointsToTest = 10000;
@@ -354,10 +369,12 @@ TEST_F(LidarTest, UnevenVerticalBeamsTest) {
       min_angle_below_zero_elevation_deg * kDegreesToRads;
   const float max_angle_above_zero_elevation_rad =
       max_angle_above_zero_elevation_deg * kDegreesToRads;
+  const float min_valid_range_m = 0.0f;
+  const float max_valid_range_m = 100.0f;
 
   // Create a LiDAR with more beams below 0 than above (like the Pandar)
-  Lidar lidar(num_azimuth_divisions, num_elevation_divisions,
-              min_angle_below_zero_elevation_rad,
+  Lidar lidar(num_azimuth_divisions, num_elevation_divisions, min_valid_range_m,
+              max_valid_range_m, min_angle_below_zero_elevation_rad,
               max_angle_above_zero_elevation_rad);
   LOG(INFO) << "Created vertically un-even LiDAR\n" << lidar;
 
