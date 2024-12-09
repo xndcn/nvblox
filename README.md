@@ -9,7 +9,6 @@ A GPU SDF library which offers
   * ESDF construction
   * Meshing
 * ROS 2 interface (see [isaac_ros_nvblox](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nvblox))
-* [Python/torch interface](./nvblox_torch/README.md)
 * Support for storage of various voxel types, and easily extended to custom voxel types.
 
 Above we show reconstruction using data from the [3DMatch dataset](https://3dmatch.cs.princeton.edu/), specifically the [Sun3D](http://sun3d.cs.princeton.edu/) `mit_76_studyroom` scene. 
