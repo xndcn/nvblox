@@ -74,7 +74,7 @@ class BlockLayer : public BaseLayer {
       : block_size_(block_size),
         memory_type_(memory_type),
         memory_pool_(memory_type),
-        gpu_layer_view_up_to_date_(false) {}
+        gpu_layer_view_(std::make_unique<GPULayerViewType>()) {}
   virtual ~BlockLayer() = default;
 
   /// Use copyFrom() instead of copy constructors
@@ -93,7 +93,7 @@ class BlockLayer : public BaseLayer {
   void copyFrom(const BlockLayer& other);
   /// See copyFrom(). Copy is performed on a stream.
   /// @param other The layer containing the copied-from data
-  void copyFromAsync(const BlockLayer& other, const CudaStream cuda_stream);
+  void copyFromAsync(const BlockLayer& other, const CudaStream& cuda_stream);
 
   /// Get a block by it's 3D index.
   /// @param index The 3D index of the block
@@ -123,6 +123,9 @@ class BlockLayer : public BaseLayer {
   /// Get the pointers to all allocated blocks
   /// @return The pointers.
   std::vector<BlockType*> getAllBlockPointers();
+  /// Get the pointers to all allocated blocks
+  /// @return The pointers.
+  std::vector<const BlockType*> getAllBlockPointers() const;
 
   /// Get block indices for which the provided predicate evaluates to true
   /// @param predicate A function taking an index and returning a flag
@@ -156,12 +159,15 @@ class BlockLayer : public BaseLayer {
   /// @param index The 3D index of the block to delete.
   /// @return True if the block was in the map and was deallocated.
   bool clearBlock(const Index3D& index);
+  bool clearBlockAsync(const Index3D& index, const CudaStream& cuda_stream);
 
   /// Clear (deallocate) blocks passed in
   /// Note if a block does not exist, this function just (silently)
   /// continues trying the rest of the list.
   /// @param indices A list of block indices to delete.
   void clearBlocks(const std::vector<Index3D>& indices);
+  void clearBlocksAsync(const std::vector<Index3D>& indices,
+                        const CudaStream& cuda_stream);
 
   /// The memory type of the blocks stored in the Layer.
   /// @return The memory type.
@@ -169,15 +175,14 @@ class BlockLayer : public BaseLayer {
 
   /// Return a GPULayerView which can be used to access the layer data on the
   /// GPU. For more details see \ref GPULayerView.
-  /// Note that this call may trigger a copy of the CPU hash to the GPU. Also
-  /// note that the returned object is only valid until the next call to
-  /// allocateBlock.
   /// @param cuda_stream The stream on which to perform the CPU to GPU copy of
   /// the hash map.
   /// @return The GPULayerView.
-  GPULayerViewType getGpuLayerViewAsync(const CudaStream& cuda_stream) const;
-  /// See \ref getGpuLayerViewAsync
-  GPULayerViewType getGpuLayerView() const;
+  GPULayerViewType& getGpuLayerView(const CudaStream& cuda_stream) const;
+
+  /// Async transfer data to the gpu hash. This function can be used to overlap
+  /// data copying with work on the CPU.
+  void updateGpuHash(const CudaStream& cuda_stream) const;
 
  protected:
   /// The side length in meters of a block.
@@ -203,12 +208,11 @@ class BlockLayer : public BaseLayer {
   ///   GPULayerView is not recopied.
   /// - Lazily allocated (space allocated on the GPU first request)
   /// - The "mutable" here is to enable caching in const member functions.
-  mutable bool gpu_layer_view_up_to_date_;
   mutable std::unique_ptr<GPULayerViewType> gpu_layer_view_;
 };
 
-/// Specialization for BlockLayer that exclusively contains VoxelBlocks to make
-/// access easier.
+/// Specialization for BlockLayer that exclusively contains VoxelBlocks to
+/// make access easier.
 template <typename _VoxelType>
 class VoxelBlockLayer : public BlockLayer<VoxelBlock<_VoxelType>> {
  public:
@@ -222,7 +226,8 @@ class VoxelBlockLayer : public BlockLayer<VoxelBlock<_VoxelType>> {
 
   /// Constructor
   /// @param voxel_size The size of each voxel
-  /// @param memory_type In which type of memory the blocks in this layer should
+  /// @param memory_type In which type of memory the blocks in this layer
+  /// should
   ///                    be stored.
   VoxelBlockLayer(float voxel_size, MemoryType memory_type)
       : BlockLayer<VoxelBlockType>(VoxelBlockType::kVoxelsPerSide * voxel_size,
@@ -242,13 +247,13 @@ class VoxelBlockLayer : public BlockLayer<VoxelBlock<_VoxelType>> {
   VoxelBlockLayer& operator=(VoxelBlockLayer&& other) = default;
 
   /// Gets voxels by copy from a list of positions.
-  /// The positions are given with respect to the layer frame (L). The function
-  /// returns the closest voxels to the passed points.
-  /// If memory_type_ == kDevice, the function retrieves voxel data from the GPU
+  /// The positions are given with respect to the layer frame (L). The
+  /// function returns the closest voxels to the passed points. If
+  /// memory_type_ == kDevice, the function retrieves voxel data from the GPU
   /// and transfers it to the CPU. Modifications to the returned voxel data do
   /// not affect the layer (they're copies).
-  /// Note that this function performs a Cudamemcpy per voxel. So it will likely
-  /// be relatively slow.
+  /// Note that this function performs a Cudamemcpy per voxel. So it will
+  /// likely be relatively slow.
   /// @param positions_L query positions in layer frame
   /// @param voxels_ptr a pointer to a vector of voxels where we'll store the
   ///                   output
@@ -271,7 +276,8 @@ class VoxelBlockLayer : public BlockLayer<VoxelBlock<_VoxelType>> {
   /// @param positions_L query positions in layer frame
   /// @param voxels_ptr a pointer to a GPU vector of voxels where we'll store
   ///                   the output
-  /// @param success_flags_ptr a pointer to a GPU vector of flags indicating if
+  /// @param success_flags_ptr a pointer to a GPU vector of flags indicating
+  /// if
   ///                          we were able to retrive each voxel.
   void getVoxelsGPU(const device_vector<Vector3f>& positions_L,
                     device_vector<VoxelType>* voxels_ptr,
@@ -288,12 +294,12 @@ class VoxelBlockLayer : public BlockLayer<VoxelBlock<_VoxelType>> {
   /// Get a voxel by copy by (closest) position
   /// The position is given with respect to the layer frame (L). The function
   /// returns the closest voxels to the passed points.
-  /// If memory_type_ == kDevice, the function retrieves voxel data from the GPU
-  /// and transfers it to the CPU. Modifications to the returned voxel data do
-  /// not affect the layer (they're copies).
-  /// Note that this function performs a Cudamemcpy for the voxel. So it's slow.
-  /// This function is intended for testing/convenience and shouldn't be used in
-  /// performance critical code.
+  /// If memory_type_ == kDevice, the function retrieves voxel data from the
+  /// GPU and transfers it to the CPU. Modifications to the returned voxel
+  /// data do not affect the layer (they're copies). Note that this function
+  /// performs a Cudamemcpy for the voxel. So it's slow. This function is
+  /// intended for testing/convenience and shouldn't be used in performance
+  /// critical code.
   /// @param p_L query position in layer frame
   /// @return A pair containing the voxel copy and a flag indicating if the
   /// voxel could be retrieved (ie if the voxel was allocated in the layer).

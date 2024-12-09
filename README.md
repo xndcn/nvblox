@@ -9,9 +9,12 @@ A GPU SDF library which offers
   * ESDF construction
   * Meshing
 * ROS 2 interface (see [isaac_ros_nvblox](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nvblox))
+* [Python/torch interface](./nvblox_torch/README.md)
 * Support for storage of various voxel types, and easily extended to custom voxel types.
 
 Above we show reconstruction using data from the [3DMatch dataset](https://3dmatch.cs.princeton.edu/), specifically the [Sun3D](http://sun3d.cs.princeton.edu/) `mit_76_studyroom` scene. 
+
+> For the latest changes please refer to the [release notes](./release-notes.md) or the [CHANGELOG](./CHANGELOG.md)
 
 ## Table of Contents
 
@@ -72,34 +75,49 @@ If you want to build nvblox into a larger project, without ROS, or you would lik
 If you want to build natively, please follow these instructions. Instructions for docker are [further below](#docker).
 
 ## Install dependencies <a id='install-dependencies'></a>
-We depend on:
-- gtest
-- glog
-- gflags
-- SQLite 3
-- CUDA 11.0 - 12.2 (others might work but are untested)
-- Eigen (no need to explicitly install, a recent version is built into the library)
-- stdgpu (downloaded during compilation)
-Please run
+
+
+Prerequisites:
+- Recent Ubuntu distribution (tested on 20.04)
+- CUDA 11.0 - 12.6 (others might work but are untested)
+
+Install the following packages:
 ```
-sudo apt-get install -y libgoogle-glog-dev libgtest-dev libgflags-dev python3-dev libsqlite3-dev libbenchmark-dev
-cd /usr/src/googletest && sudo cmake . && sudo cmake --build . --target install
+sudo apt-get update && sudo apt-get install git jq gnupg apt-utils software-properties-common build-essential sudo python3-pip wget sudo git python3-dev git-lfs
+```
+
+Activate git-lfs.
+```
+git lfs install --skip-repo
+```
+
+Run the following snipped to install cmake v3.22.1.
+**NB: This will replace any previously installed version of cmake.**
+Use the dockerized build method if you do not wish to modify your system.
+
+```
+wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc  | gpg --dearmor - | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null \
+    && echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' | sudo tee /etc/apt/sources.list.d/kitware.list >/dev/null \
+    && sudo apt-get update \
+    && sudo apt-get install -y kitware-archive-keyring \
+    && sudo apt-get remove -y cmake && sudo apt-get purge -y cmake && sudo apt-get remove -y cmake-data && sudo apt-get purge -y cmake \
+    && sudo apt-get install -y cmake=3.22.1-0kitware1ubuntu20.04.1 cmake-data=3.22.1-0kitware1ubuntu20.04.1
 ```
 
 ## Build and run tests and benchmark <a id='build-and-run-tests-and-benchmark'></a>
-Build:
+
+From the root of the repository, run:
 ```
-cd nvblox/nvblox
 mkdir build
 cd build
-cmake .. && make
+cmake .. && make -j ${nproc}
 ```
 
 Run test and benchmark from build dir:
 ```
-ctest
+cd nvblox
+ctest -j ${nproc}
 ```
-
 
 ## Run an example <a id='run-an-example'></a>
 In this example we fuse data from the [3DMatch dataset](https://3dmatch.cs.princeton.edu/). First let's grab the dataset. Here I'm downloading it to my dataset folder `~/datasets/3dmatch`.
@@ -109,29 +127,21 @@ unzip ~/datasets/3dmatch/sun3d-mit_76_studyroom-76-1studyroom2.zip -d ~/datasets
 ```
 Navigate to and run the `fuse_3dmatch` binary. From the nvblox base folder run
 ```
-cd nvblox/build/executables
+cd build/nvblox/executables
 ./fuse_3dmatch ~/datasets/3dmatch/sun3d-mit_76_studyroom-76-1studyroom2/ mesh.ply
 ```
 Once it's done we can view the output mesh using the Open3D viewer. Instructions for installing open3d-viewer can be found below.
 ```
-Open3D mesh.ply
+open3d draw mesh.ply
 ```
 You should see a mesh of a room:
 ![](docs/images/reconstruction_in_docker_trim.png)
 
 
 # Docker <a id='docker'></a>
+Docker is the recommended way of building the library.
 
-We have several dockerfiles (in the `docker` subfolder) which layer on top of one another for the following purposes:
-
-* **Docker.deps**
-  * This installs our dependencies.
-* **Docker.jetson_deps**
-  * Same as above, just on the Jetson (Jetpack 6 and above).
-* **Docker.build**
-  * Layers on top of Docker.deps.
-  * This builds our package.
-
+## Prerequisites
 We rely on nvidia docker. Install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) following the instructions on that website.
 
 We use the GPU during build, not only at run time. In the default configuration the GPU is only used at at runtime. One must therefore set the default runtime. Add `"default-runtime": "nvidia"` to `/etc/docker/daemon.json` such that it looks like:
@@ -150,7 +160,27 @@ Restart docker
 ```
 sudo systemctl restart docker
 ```
-Now Let's build Dockerfile.deps docker image. This image install contains our dependencies.
+
+## Start an interactive container session
+
+On X86, the following script can be used to build and launch a GUI-enabled docker image containing all dependencies. The directory containing the nvblox repository is mounted inside the container. Once insde, the general [build steps](#build-and-run-tests-and-benchmark) can be followed to build the library.
+```_
+./docker/run_docker.sh
+```
+
+## Manually build a docker image
+The images can also be built manually. We have several dockerfiles (in the `docker` subfolder) which
+layer on top of one another for the following purposes:
+
+* **Docker.deps**
+  * This installs our dependencies.
+* **Docker.jetson_deps**
+  * Same as above, just on the Jetson (Jetpack 6 and above).
+* **Docker.build**
+  * Layers on top of Docker.deps.
+  * This builds our package.
+
+The following command build an image containing our dependencies:
 ```
 docker build -t nvblox_deps -f docker/Dockerfile.deps .
 ```
@@ -171,7 +201,7 @@ apt-get update
 apt-get install unzip
 wget http://vision.princeton.edu/projects/2016/3DMatch/downloads/rgbd-datasets/sun3d-mit_76_studyroom-76-1studyroom2.zip -P ~/datasets/3dmatch
 unzip ~/datasets/3dmatch/sun3d-mit_76_studyroom-76-1studyroom2.zip -d ~/datasets/3dmatch
-cd nvblox/nvblox/build/executables/
+cd nvblox/build/executables/
 ./fuse_3dmatch ~/datasets/3dmatch/sun3d-mit_76_studyroom-76-1studyroom2/ mesh.ply
 ```
 Now let's visualize. From the same executable folder run:
@@ -179,7 +209,7 @@ Now let's visualize. From the same executable folder run:
 apt-get install libgl1-mesa-glx libc++1 libc++1-10 libc++abi1-10 libglfw3 libpng16-16
 wget https://github.com/isl-org/Open3D/releases/download/v0.13.0/open3d-app-0.13.0-Ubuntu_20.04.deb
 dpkg -i open3d-app-0.13.0-Ubuntu_20.04.deb
-Open3D mesh.ply
+open3d draw mesh.ply
 ```
 to visualize on the jetson see [below](#open3d-on-jetson).
 

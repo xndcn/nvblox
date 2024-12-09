@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ limitations under the License.
 #include "nvblox/io/layer_cake_io.h"
 #include "nvblox/io/mesh_io.h"
 #include "nvblox/io/pointcloud_io.h"
+#include "nvblox/mapper/internal/mapper_common.h"
 #include "nvblox/utils/rates.h"
 
 namespace nvblox {
@@ -36,6 +37,7 @@ Mapper::Mapper(float voxel_size_m, MemoryType memory_type,
       freespace_integrator_(cuda_stream),
       occupancy_integrator_(cuda_stream),
       lidar_occupancy_integrator_(cuda_stream),
+      tsdf_shape_clearer_(cuda_stream),
       color_integrator_(cuda_stream),
       mesh_integrator_(cuda_stream),
       esdf_integrator_(cuda_stream),
@@ -44,6 +46,14 @@ Mapper::Mapper(float voxel_size_m, MemoryType memory_type,
   layers_ =
       LayerCake::create<TsdfLayer, ColorLayer, FreespaceLayer, OccupancyLayer,
                         EsdfLayer, MeshLayer>(voxel_size_m_, memory_type);
+  layer_streamers_ =
+      LayerCakeStreamer::create<TsdfLayer, ColorLayer, FreespaceLayer,
+                                OccupancyLayer, EsdfLayer, MeshLayer>();
+  // Make the camera integrators share the same viewpoint cache.
+  shareViewpointCaches(&tsdf_integrator_, &occupancy_integrator_,
+                       &color_integrator_);
+  // Make the LiDAR integrators share the same viewpoint cache
+  shareViewpointCaches(&lidar_tsdf_integrator_, &lidar_occupancy_integrator_);
 }
 
 Mapper::Mapper(const std::string& map_filepath, MemoryType memory_type,
@@ -55,6 +65,7 @@ Mapper::Mapper(const std::string& map_filepath, MemoryType memory_type,
       freespace_integrator_(cuda_stream),
       occupancy_integrator_(cuda_stream),
       lidar_occupancy_integrator_(cuda_stream),
+      tsdf_shape_clearer_(cuda_stream),
       color_integrator_(cuda_stream),
       mesh_integrator_(cuda_stream),
       esdf_integrator_(cuda_stream),
@@ -68,111 +79,175 @@ void Mapper::setMapperParams(const MapperParams& params) {
   // depth preprocessing
   do_depth_preprocessing(params.do_depth_preprocessing);
   depth_preprocessing_num_dilations(params.depth_preprocessing_num_dilations);
-  // mesh streaming
-  mesh_bandwidth_limit_mbps(params.mesh_bandwidth_limit_mbps);
-  // 2d esdf slice
-  esdf_slice_min_height(params.esdf_slice_min_height);
-  esdf_slice_max_height(params.esdf_slice_max_height);
-  esdf_slice_height(params.esdf_slice_height);
+
+  // ======= ESDF INTEGRATOR =======
+  esdf_integrator().esdf_slice_min_height(
+      params.esdf_integrator_params.esdf_slice_min_height);
+  esdf_integrator().esdf_slice_max_height(
+      params.esdf_integrator_params.esdf_slice_max_height);
+  esdf_integrator().esdf_slice_height(
+      params.esdf_integrator_params.esdf_slice_height);
+  esdf_integrator().slice_height_above_plane_m(
+      params.esdf_integrator_params.slice_height_above_plane_m);
+  esdf_integrator().slice_height_thickness_m(
+      params.esdf_integrator_params.slice_height_thickness_m);
+  esdf_integrator().max_esdf_distance_m(
+      params.esdf_integrator_params.esdf_integrator_max_distance_m);
+  esdf_integrator().min_weight(
+      params.esdf_integrator_params.esdf_integrator_min_weight);
+  esdf_integrator().max_site_distance_vox(
+      params.esdf_integrator_params.esdf_integrator_max_site_distance_vox);
+
   // Decay
   exclude_last_view_from_decay(params.exclude_last_view_from_decay);
 
   // ======= PROJECTIVE INTEGRATOR (TSDF/COLOR/OCCUPANCY)
   // max integration distance
   tsdf_integrator().max_integration_distance_m(
-      params.projective_integrator_max_integration_distance_m);
+      params.projective_integrator_params
+          .projective_integrator_max_integration_distance_m);
   occupancy_integrator().max_integration_distance_m(
-      params.projective_integrator_max_integration_distance_m);
+      params.projective_integrator_params
+          .projective_integrator_max_integration_distance_m);
   color_integrator().max_integration_distance_m(
-      params.projective_integrator_max_integration_distance_m);
+      params.projective_integrator_params
+          .projective_integrator_max_integration_distance_m);
   lidar_tsdf_integrator().max_integration_distance_m(
-      params.lidar_projective_integrator_max_integration_distance_m);
+      params.projective_integrator_params
+          .lidar_projective_integrator_max_integration_distance_m);
   lidar_occupancy_integrator().max_integration_distance_m(
-      params.lidar_projective_integrator_max_integration_distance_m);
+      params.projective_integrator_params
+          .lidar_projective_integrator_max_integration_distance_m);
   // truncation distance
   tsdf_integrator().truncation_distance_vox(
-      params.projective_integrator_truncation_distance_vox);
+      params.projective_integrator_params
+          .projective_integrator_truncation_distance_vox);
   occupancy_integrator().truncation_distance_vox(
-      params.projective_integrator_truncation_distance_vox);
+      params.projective_integrator_params
+          .projective_integrator_truncation_distance_vox);
   lidar_tsdf_integrator().truncation_distance_vox(
-      params.projective_integrator_truncation_distance_vox);
+      params.projective_integrator_params
+          .projective_integrator_truncation_distance_vox);
   lidar_occupancy_integrator().truncation_distance_vox(
-      params.projective_integrator_truncation_distance_vox);
+      params.projective_integrator_params
+          .projective_integrator_truncation_distance_vox);
   // weighting
   tsdf_integrator().weighting_function_type(
-      params.projective_integrator_weighting_mode);
+      params.projective_integrator_params.projective_integrator_weighting_mode);
   color_integrator().weighting_function_type(
-      params.projective_integrator_weighting_mode);
+      params.projective_integrator_params.projective_integrator_weighting_mode);
   // max weight
-  tsdf_integrator().max_weight(params.projective_integrator_max_weight);
-  lidar_tsdf_integrator().max_weight(params.projective_integrator_max_weight);
-  color_integrator().max_weight(params.projective_integrator_max_weight);
+  tsdf_integrator().max_weight(
+      params.projective_integrator_params.projective_integrator_max_weight);
+  lidar_tsdf_integrator().max_weight(
+      params.projective_integrator_params.projective_integrator_max_weight);
+  color_integrator().max_weight(
+      params.projective_integrator_params.projective_integrator_max_weight);
+  // invalid depth decay
+  tsdf_integrator().invalid_depth_decay_factor(
+      params.projective_integrator_params
+          .projective_tsdf_integrator_invalid_depth_decay_factor);
+  lidar_tsdf_integrator().invalid_depth_decay_factor(
+      params.projective_integrator_params
+          .projective_tsdf_integrator_invalid_depth_decay_factor);
 
   // ======= OCCUPANCY INTEGRATOR =======
   occupancy_integrator().free_region_occupancy_probability(
-      params.free_region_occupancy_probability);
+      params.occupancy_integrator_params.free_region_occupancy_probability);
   lidar_occupancy_integrator().free_region_occupancy_probability(
-      params.free_region_occupancy_probability);
+      params.occupancy_integrator_params.free_region_occupancy_probability);
   occupancy_integrator().occupied_region_occupancy_probability(
-      params.occupied_region_occupancy_probability);
+      params.occupancy_integrator_params.occupied_region_occupancy_probability);
   lidar_occupancy_integrator().occupied_region_occupancy_probability(
-      params.occupied_region_occupancy_probability);
+      params.occupancy_integrator_params.occupied_region_occupancy_probability);
   occupancy_integrator().unobserved_region_occupancy_probability(
-      params.unobserved_region_occupancy_probability);
+      params.occupancy_integrator_params
+          .unobserved_region_occupancy_probability);
   lidar_occupancy_integrator().unobserved_region_occupancy_probability(
-      params.unobserved_region_occupancy_probability);
+      params.occupancy_integrator_params
+          .unobserved_region_occupancy_probability);
   occupancy_integrator().occupied_region_half_width_m(
-      params.occupied_region_half_width_m);
+      params.occupancy_integrator_params.occupied_region_half_width_m);
   lidar_occupancy_integrator().occupied_region_half_width_m(
-      params.occupied_region_half_width_m);
+      params.occupancy_integrator_params.occupied_region_half_width_m);
 
-  // ======= ESDF INTEGRATOR =======
-  esdf_integrator().max_esdf_distance_m(params.esdf_integrator_max_distance_m);
-  esdf_integrator().min_weight(params.esdf_integrator_min_weight);
-  esdf_integrator().max_site_distance_vox(
-      params.esdf_integrator_max_site_distance_vox);
+  // ======= VIEW CALCULATOR =======
+  tsdf_integrator().view_calculator().raycast_subsampling_factor(
+      params.view_calculator_params.raycast_subsampling_factor);
+  tsdf_integrator().view_calculator().workspace_bounds_type(
+      params.view_calculator_params.workspace_bounds_type);
+  tsdf_integrator().view_calculator().workspace_bounds_min_corner_m(
+      Vector3f(params.view_calculator_params.workspace_bounds_min_corner_x_m,
+               params.view_calculator_params.workspace_bounds_min_corner_y_m,
+               params.view_calculator_params.workspace_bounds_min_height_m));
+  tsdf_integrator().view_calculator().workspace_bounds_max_corner_m(
+      Vector3f(params.view_calculator_params.workspace_bounds_max_corner_x_m,
+               params.view_calculator_params.workspace_bounds_max_corner_y_m,
+               params.view_calculator_params.workspace_bounds_max_height_m));
+  color_integrator().view_calculator().raycast_subsampling_factor(
+      params.view_calculator_params.raycast_subsampling_factor);
+  color_integrator().view_calculator().workspace_bounds_type(
+      params.view_calculator_params.workspace_bounds_type);
+  color_integrator().view_calculator().workspace_bounds_min_corner_m(
+      Vector3f(params.view_calculator_params.workspace_bounds_min_corner_x_m,
+               params.view_calculator_params.workspace_bounds_min_corner_y_m,
+               params.view_calculator_params.workspace_bounds_min_height_m));
+  color_integrator().view_calculator().workspace_bounds_max_corner_m(
+      Vector3f(params.view_calculator_params.workspace_bounds_max_corner_x_m,
+               params.view_calculator_params.workspace_bounds_max_corner_y_m,
+               params.view_calculator_params.workspace_bounds_max_height_m));
 
   // ======= MESH INTEGRATOR =======
-  mesh_integrator().min_weight(params.mesh_integrator_min_weight);
-  mesh_integrator().weld_vertices(params.mesh_integrator_weld_vertices);
+  mesh_integrator().min_weight(
+      params.mesh_integrator_params.mesh_integrator_min_weight);
+  mesh_integrator().weld_vertices(
+      params.mesh_integrator_params.mesh_integrator_weld_vertices);
+
+  // ======= DECAY INTEGRATOR (TSDF/OCCUPANCY)=======
+  tsdf_decay_integrator().deallocate_decayed_blocks(
+      params.decay_integrator_base_params
+          .decay_integrator_deallocate_decayed_blocks);
+  occupancy_decay_integrator().deallocate_decayed_blocks(
+      params.decay_integrator_base_params
+          .decay_integrator_deallocate_decayed_blocks);
 
   // ======= TSDF DECAY INTEGRATOR =======
-  tsdf_decay_integrator().decay_factor(params.tsdf_decay_factor);
+  tsdf_decay_integrator().decay_factor(
+      params.tsdf_decay_integrator_params.tsdf_decay_factor);
   tsdf_decay_integrator().decayed_weight_threshold(
-      params.tsdf_decayed_weight_threshold);
+      params.tsdf_decay_integrator_params.tsdf_decayed_weight_threshold);
   tsdf_decay_integrator().set_free_distance_on_decayed(
-      params.tsdf_set_free_distance_on_decayed);
+      params.tsdf_decay_integrator_params.tsdf_set_free_distance_on_decayed);
   tsdf_decay_integrator().free_distance_vox(
-      params.tsdf_decayed_free_distance_vox);
-  tsdf_decay_integrator().deallocate_decayed_blocks(
-      params.tsdf_deallocate_decayed_blocks);
+      params.tsdf_decay_integrator_params.tsdf_decayed_free_distance_vox);
 
   // ======= OCCUPANCY DECAY INTEGRATOR =======
   occupancy_decay_integrator().free_region_decay_probability(
-      params.free_region_decay_probability);
+      params.occupancy_decay_integrator_params.free_region_decay_probability);
   occupancy_decay_integrator().occupied_region_decay_probability(
-      params.occupied_region_decay_probability);
-  occupancy_decay_integrator().deallocate_decayed_blocks(
-      params.occupancy_deallocate_decayed_blocks);
+      params.occupancy_decay_integrator_params
+          .occupied_region_decay_probability);
+  occupancy_decay_integrator().decay_to_free(
+      params.occupancy_decay_integrator_params.occupancy_decay_to_free);
 
   // ======= FREESPACE INTEGRATOR =======
   freespace_integrator().max_tsdf_distance_for_occupancy_m(
-      params.max_tsdf_distance_for_occupancy_m);
+      params.freespace_integrator_params.max_tsdf_distance_for_occupancy_m);
   freespace_integrator().max_unobserved_to_keep_consecutive_occupancy_ms(
-      params.max_unobserved_to_keep_consecutive_occupancy_ms);
+      params.freespace_integrator_params
+          .max_unobserved_to_keep_consecutive_occupancy_ms);
   freespace_integrator().min_duration_since_occupied_for_freespace_ms(
-      params.min_duration_since_occupied_for_freespace_ms);
+      params.freespace_integrator_params
+          .min_duration_since_occupied_for_freespace_ms);
   freespace_integrator().min_consecutive_occupancy_duration_for_reset_ms(
-      params.min_consecutive_occupancy_duration_for_reset_ms);
-  freespace_integrator().check_neighborhood(params.check_neighborhood);
-
-  // ======= MESH STREAMER =======
-  mesh_streamer().exclusion_height_m(params.mesh_streamer_exclusion_height_m);
-  mesh_streamer().exclusion_radius_m(params.mesh_streamer_exclusion_radius_m);
+      params.freespace_integrator_params
+          .min_consecutive_occupancy_duration_for_reset_ms);
+  freespace_integrator().check_neighborhood(
+      params.freespace_integrator_params.check_neighborhood);
 }
 
 const DepthImage& Mapper::preprocessDepthImageAsync(
-    const DepthImage& depth_image) {
+    const DepthImageConstView& depth_image) {
   // NOTE(alexmillane): We return a const reference to an image, to
   // avoid reallocating.
   // Copy in the depth image
@@ -192,24 +267,35 @@ const DepthImage& Mapper::preprocessDepthImageAsync(
 
 void Mapper::integrateDepth(const DepthImage& depth_frame,
                             const Transform& T_L_C, const Camera& camera) {
+  integrateDepth(MaskedDepthImageConstView(depth_frame), T_L_C, camera);
+}
+
+void Mapper::integrateDepth(const MaskedDepthImageConstView& depth_frame,
+                            const Transform& T_L_C, const Camera& camera) {
   CHECK(projective_layer_type_ != ProjectiveLayerType::kNone)
       << "You are trying to update on an inexistent projective layer.";
   // If requested, we perform preprocessing of the depth image. At the moment
   // this is just (optional) dilation of the invalid regions.
-  const DepthImage& depth_image_for_integration =
-      (do_depth_preprocessing_) ? preprocessDepthImageAsync(depth_frame)
-                                : depth_frame;
+  MaskedDepthImageConstView depth_image_for_integration = depth_frame;
+  if (do_depth_preprocessing_) {
+    depth_image_for_integration = MaskedDepthImageConstView(
+        preprocessDepthImageAsync(depth_frame), depth_frame.mask());
+  }
 
   // Call the integrator.
   std::vector<Index3D> updated_blocks;
   if (hasTsdfLayer(projective_layer_type_)) {
-    tsdf_integrator_.integrateFrame(depth_image_for_integration, T_L_C, camera,
-                                    layers_.getPtr<TsdfLayer>(),
-                                    &updated_blocks);
+    tsdf_integrator_.integrateFrame(
+        MaskedDepthImageConstView(depth_image_for_integration), T_L_C, camera,
+        layers_.getPtr<TsdfLayer>(), &updated_blocks);
+
+    layers_.getPtr<TsdfLayer>()->updateGpuHash(*cuda_stream_);
   } else if (projective_layer_type_ == ProjectiveLayerType::kOccupancy) {
     occupancy_integrator_.integrateFrame(
         depth_image_for_integration, T_L_C, camera,
         layers_.getPtr<OccupancyLayer>(), &updated_blocks);
+
+    layers_.getPtr<OccupancyLayer>()->updateGpuHash(*cuda_stream_);
   }
 
   // Save the viewpoint for use in viewpoint exclusion.
@@ -219,7 +305,12 @@ void Mapper::integrateDepth(const DepthImage& depth_frame,
       last_depth_image_ =
           DepthImage(depth_image_for_integration.rows(),
                      depth_image_for_integration.cols(), MemoryType::kDevice);
+    } else {
+      last_depth_image_.value().resizeAsync(depth_image_for_integration.rows(),
+                                            depth_image_for_integration.cols(),
+                                            *cuda_stream_);
     }
+
     // NOTE(alexmillane): We could get rid this copy by using a double buffer.
     last_depth_image_.value().copyFromAsync(depth_image_for_integration,
                                             *cuda_stream_);
@@ -240,10 +331,14 @@ void Mapper::integrateLidarDepth(const DepthImage& depth_frame,
     lidar_tsdf_integrator_.integrateFrame(depth_frame, T_L_C, lidar,
                                           layers_.getPtr<TsdfLayer>(),
                                           &updated_blocks);
+
+    layers_.getPtr<TsdfLayer>()->updateGpuHash(*cuda_stream_);
   } else if (projective_layer_type_ == ProjectiveLayerType::kOccupancy) {
     lidar_occupancy_integrator_.integrateFrame(depth_frame, T_L_C, lidar,
                                                layers_.getPtr<OccupancyLayer>(),
                                                &updated_blocks);
+
+    layers_.getPtr<OccupancyLayer>()->updateGpuHash(*cuda_stream_);
   }
 
   blocks_to_update_tracker_.addBlocksToUpdate(updated_blocks);
@@ -256,6 +351,8 @@ void Mapper::integrateColor(const ColorImage& color_frame,
     color_integrator_.integrateFrame(color_frame, T_L_C, camera,
                                      layers_.get<TsdfLayer>(),
                                      layers_.getPtr<ColorLayer>());
+
+    layers_.getPtr<ColorLayer>()->updateGpuHash(*cuda_stream_);
   }
 }
 
@@ -273,9 +370,9 @@ void Mapper::decayTsdf() {
         last_depth_T_L_C_.has_value()) {
       deallocated_blocks = tsdf_decay_integrator_.decay(
           layers_.getPtr<TsdfLayer>(),
-          DecayViewExclusionOptions(
-              &last_depth_image_.value(), last_depth_T_L_C_.value(),
-              last_depth_camera_.value(),
+          ViewBasedInclusionData(
+              last_depth_T_L_C_.value(), last_depth_camera_.value(),
+              &last_depth_image_.value(),
               tsdf_integrator_.max_integration_distance_m(),
               tsdf_integrator_.get_truncation_distance_m(voxel_size_m_)),
           *cuda_stream_);
@@ -288,6 +385,7 @@ void Mapper::decayTsdf() {
   // Clear the blocks that got deallocated in the tsdf layer also in the esdf,
   // freespace and mesh layers.
   clearBlocksInLayers(deallocated_blocks);
+  layers_.getPtr<TsdfLayer>()->updateGpuHash(*cuda_stream_);
 }
 
 void Mapper::decayOccupancy() {
@@ -303,9 +401,9 @@ void Mapper::decayOccupancy() {
     if (last_depth_image_ && last_depth_camera_ && last_depth_T_L_C_) {
       deallocated_blocks = occupancy_decay_integrator_.decay(
           layers_.getPtr<OccupancyLayer>(), std::nullopt,
-          DecayViewExclusionOptions(
-              &last_depth_image_.value(), last_depth_T_L_C_.value(),
-              last_depth_camera_.value(),
+          ViewBasedInclusionData(
+              last_depth_T_L_C_.value(), last_depth_camera_.value(),
+              &last_depth_image_.value(),
               occupancy_integrator_.max_integration_distance_m(),
               occupancy_integrator_.get_truncation_distance_m(voxel_size_m_)),
           *cuda_stream_);
@@ -318,10 +416,44 @@ void Mapper::decayOccupancy() {
   // Clear the blocks that got deallocated in the occupancy layer also in the
   // esdf, freespace and mesh layers.
   clearBlocksInLayers(deallocated_blocks);
+  layers_.getPtr<OccupancyLayer>()->updateGpuHash(*cuda_stream_);
+}
+
+void Mapper::clearTsdfInsideShapes(const std::vector<BoundingShape>& shapes) {
+  const std::vector<Index3D> updated_blocks =
+      tsdf_shape_clearer_.clear(shapes, layers_.getPtr<TsdfLayer>());
+  blocks_to_update_tracker_.addBlocksToUpdate(updated_blocks);
 }
 
 void Mapper::updateFreespace(Time update_time_ms,
                              UpdateFullLayer update_full_layer) {
+  updateFreespace(update_time_ms, std::nullopt, update_full_layer);
+}
+
+void Mapper::updateFreespace(Time update_time_ms, const Transform& T_L_C,
+                             const Camera& camera,
+                             const DepthImage& depth_frame,
+                             UpdateFullLayer update_full_layer) {
+  // The freespace integrator only updates voxel that are in view and within the
+  // negative truncation distance. Due to noisy depth measurements, a voxel
+  // might occasionaly end up on the "wrong" side of the truncation distance
+  // and would thus not be updated. To mitigate the effect of this on/off
+  // switching, we inflate the truncation distance.
+  constexpr float kTruncationDistanceMultipler = 2.F;
+
+  updateFreespace(
+      update_time_ms,
+      ViewBasedInclusionData(
+          T_L_C, camera, &depth_frame,
+          tsdf_integrator_.max_integration_distance_m(),
+          kTruncationDistanceMultipler *
+              tsdf_integrator_.get_truncation_distance_m(voxel_size_m_)),
+      update_full_layer);
+}
+
+void Mapper::updateFreespace(
+    Time update_time_ms, std::optional<ViewBasedInclusionData> view_to_update,
+    UpdateFullLayer update_full_layer) {
   CHECK(hasFreespaceLayer(projective_layer_type_))
       << "Trying to update the freespace layer while it is not enabled.";
 
@@ -330,56 +462,19 @@ void Mapper::updateFreespace(Time update_time_ms,
       getBlocksToUpdate(BlocksToUpdateType::kFreespace, update_full_layer);
 
   // Call the integrator.
-  freespace_integrator_.updateFreespaceLayer(blocks_to_update, update_time_ms,
-                                             layers_.get<TsdfLayer>(),
-                                             layers_.getPtr<FreespaceLayer>());
+  freespace_integrator_.updateFreespaceLayer(
+      blocks_to_update, update_time_ms, layers_.get<TsdfLayer>(),
+      view_to_update, layers_.getPtr<FreespaceLayer>());
 
   // Mark blocks as updated
   blocks_to_update_tracker_.markBlocksAsUpdated(BlocksToUpdateType::kFreespace);
+  layers_.getPtr<FreespaceLayer>()->updateGpuHash(*cuda_stream_);
 }
 
-std::shared_ptr<const SerializedMesh> Mapper::createSerializedMesh(
-    const std::vector<Index3D>& mesh_blocks_to_serialize,
-    const std::optional<Transform>& maybe_T_L_C) {
-  mesh_streamer_.markIndicesCandidates(mesh_blocks_to_serialize);
-
-  // Measure tick rate of requests to determine how many bytes of mesh we should
-  // stream. clamp measurement to avoid instabilities when there are few rate
-  // measurements.
-  timing::Rates::tick("mapper/stream_mesh");
-  constexpr float kMinRateHz = 1.F;
-  constexpr float kMaxRateHz = 100.F;
-  const float measured_mesh_rate_hz = std::max(
-      kMinRateHz,
-      std::min(kMaxRateHz, timing::Rates::getMeanRateHz("mapper/stream_mesh")));
-
-  const float measured_mesh_update_period_s = 1.0f / measured_mesh_rate_hz;
-  const float megabits_per_update =
-      mesh_bandwidth_limit_mbps_ * measured_mesh_update_period_s;
-  constexpr float kMegabitsToBytes = 1e6f / 8.0f;
-
-  // If requested bandwidth is negative, we stream as much as we can
-  const size_t num_bytes_to_stream =
-      (mesh_bandwidth_limit_mbps_ < 0.F)
-          ? std::numeric_limits<size_t>::max()
-          : static_cast<size_t>(megabits_per_update * kMegabitsToBytes);
-
-  std::optional<Vector3f> exclusion_center;
-  if (maybe_T_L_C.has_value()) {
-    exclusion_center = maybe_T_L_C.value().translation();
-  }
-
-  return mesh_streamer_.getNBytesOfSerializedMeshBlocks(
-      num_bytes_to_stream, layers_.get<MeshLayer>(), exclusion_center,
-      *cuda_stream_);
-}
-
-std::shared_ptr<const SerializedMesh> Mapper::updateMesh(
-    UpdateFullLayer update_full_layer,
-    const std::optional<Transform>& maybe_T_L_C, bool serialize_full_mesh) {
+void Mapper::updateMesh(UpdateFullLayer update_full_layer) {
   // Mesh is only updated for Tsdf layers (not for occupancy)
   if (!hasTsdfLayer(projective_layer_type_)) {
-    return std::make_shared<const SerializedMesh>();
+    return;
   } else {
     // Get the mesh blocks that need an update
     std::vector<Index3D> blocks_to_update =
@@ -393,18 +488,7 @@ std::shared_ptr<const SerializedMesh> Mapper::updateMesh(
     mesh_integrator_.colorMesh(layers_.get<ColorLayer>(), blocks_to_update,
                                layers_.getPtr<MeshLayer>());
 
-    // Mark blocks as updated
     blocks_to_update_tracker_.markBlocksAsUpdated(BlocksToUpdateType::kMesh);
-
-    if (serialize_full_mesh) {
-      // Serialize all mesh blocks.
-      // Can be helpful for resending the full mesh.
-      return createSerializedMesh(layers_.get<MeshLayer>().getAllBlockIndices(),
-                                  maybe_T_L_C);
-    } else {
-      // Serialize all updated mesh blocks.
-      return createSerializedMesh(blocks_to_update, maybe_T_L_C);
-    }
   }
 }
 
@@ -436,7 +520,8 @@ void Mapper::updateEsdf(UpdateFullLayer update_full_layer) {
   blocks_to_update_tracker_.markBlocksAsUpdated(BlocksToUpdateType::kEsdf);
 }
 
-void Mapper::updateEsdfSlice(UpdateFullLayer update_full_layer) {
+void Mapper::updateEsdfSlice(UpdateFullLayer update_full_layer,
+                             std::optional<Plane> ground_plane) {
   CHECK(esdf_mode_ != EsdfMode::k3D) << "Currently, we limit computation of "
                                         "the ESDF to 2d *or* 3d. Not both.";
   esdf_mode_ = EsdfMode::k2D;
@@ -445,26 +530,40 @@ void Mapper::updateEsdfSlice(UpdateFullLayer update_full_layer) {
   std::vector<Index3D> blocks_to_update =
       getBlocksToUpdate(BlocksToUpdateType::kEsdf, update_full_layer);
 
-  if (projective_layer_type_ == ProjectiveLayerType::kTsdfWithFreespace) {
-    // Passing a freespace layer to the integrator for checking if
-    // candidate esdf sites fall into freespace
-    esdf_integrator_.integrateSlice(
-        layers_.get<TsdfLayer>(), layers_.get<FreespaceLayer>(),
-        blocks_to_update, esdf_slice_min_height_, esdf_slice_max_height_,
-        esdf_slice_height_, layers_.getPtr<EsdfLayer>());
-  } else if (projective_layer_type_ == ProjectiveLayerType::kTsdf) {
-    esdf_integrator_.integrateSlice(layers_.get<TsdfLayer>(), blocks_to_update,
-                                    esdf_slice_min_height_,
-                                    esdf_slice_max_height_, esdf_slice_height_,
-                                    layers_.getPtr<EsdfLayer>());
+  if (ground_plane) {
+    if (projective_layer_type_ == ProjectiveLayerType::kTsdfWithFreespace) {
+      // Passing a freespace layer to the integrator for checking if
+      // candidate esdf sites fall into freespace
+      esdf_integrator_.integrateSlice(
+          layers_.get<TsdfLayer>(), layers_.get<FreespaceLayer>(),
+          blocks_to_update, ground_plane.value(), layers_.getPtr<EsdfLayer>());
+    } else if (projective_layer_type_ == ProjectiveLayerType::kTsdf) {
+      esdf_integrator_.integrateSlice(layers_.get<TsdfLayer>(),
+                                      blocks_to_update, ground_plane.value(),
+                                      layers_.getPtr<EsdfLayer>());
 
-  } else if (projective_layer_type_ == ProjectiveLayerType::kOccupancy) {
-    esdf_integrator_.integrateSlice(layers_.get<OccupancyLayer>(),
-                                    blocks_to_update, esdf_slice_min_height_,
-                                    esdf_slice_max_height_, esdf_slice_height_,
-                                    layers_.getPtr<EsdfLayer>());
+    } else if (projective_layer_type_ == ProjectiveLayerType::kOccupancy) {
+      esdf_integrator_.integrateSlice(layers_.get<OccupancyLayer>(),
+                                      blocks_to_update, ground_plane.value(),
+                                      layers_.getPtr<EsdfLayer>());
+    }
+  } else {
+    if (projective_layer_type_ == ProjectiveLayerType::kTsdfWithFreespace) {
+      // Passing a freespace layer to the integrator for checking if
+      // candidate esdf sites fall into freespace
+      esdf_integrator_.integrateSlice(
+          layers_.get<TsdfLayer>(), layers_.get<FreespaceLayer>(),
+          blocks_to_update, layers_.getPtr<EsdfLayer>());
+    } else if (projective_layer_type_ == ProjectiveLayerType::kTsdf) {
+      esdf_integrator_.integrateSlice(layers_.get<TsdfLayer>(),
+                                      blocks_to_update,
+                                      layers_.getPtr<EsdfLayer>());
+    } else if (projective_layer_type_ == ProjectiveLayerType::kOccupancy) {
+      esdf_integrator_.integrateSlice(layers_.get<OccupancyLayer>(),
+                                      blocks_to_update,
+                                      layers_.getPtr<EsdfLayer>());
+    }
   }
-
   // Mark blocks as updated
   blocks_to_update_tracker_.markBlocksAsUpdated(BlocksToUpdateType::kEsdf);
 }
@@ -475,12 +574,14 @@ void Mapper::clearOutsideRadius(const Vector3f& center, float radius) {
     block_indices_for_deletion = getBlocksOutsideRadius(
         layers_.get<TsdfLayer>().getAllBlockIndices(),
         layers_.get<TsdfLayer>().block_size(), center, radius);
-    layers_.getPtr<TsdfLayer>()->clearBlocks(block_indices_for_deletion);
+    layers_.getPtr<TsdfLayer>()->clearBlocksAsync(block_indices_for_deletion,
+                                                  *cuda_stream_);
   } else if (projective_layer_type_ == ProjectiveLayerType::kOccupancy) {
     block_indices_for_deletion = getBlocksOutsideRadius(
         layers_.get<OccupancyLayer>().getAllBlockIndices(),
         layers_.get<OccupancyLayer>().block_size(), center, radius);
-    layers_.getPtr<OccupancyLayer>()->clearBlocks(block_indices_for_deletion);
+    layers_.getPtr<OccupancyLayer>()->clearBlocksAsync(
+        block_indices_for_deletion, *cuda_stream_);
   }
 
   // Clear the blocks that got deallocated in the tsdf/occupancy layer also in
@@ -503,18 +604,18 @@ void Mapper::markUnobservedTsdfFreeInsideRadius(const Vector3f& center,
   blocks_to_update_tracker_.addBlocksToUpdate(updated_blocks);
 }
 
-std::vector<Index3D> Mapper::getClearedMeshBlocks(
+std::vector<Index3D> Mapper::getClearedBlocks(
     const std::vector<Index3D>& blocks_to_ignore) {
   // Remove the blocks_to_ignore from the set.
   for (const Index3D& idx : blocks_to_ignore) {
-    cleared_mesh_blocks_.erase(idx);
+    cleared_blocks_.erase(idx);
   }
-  // Get the vector of cleared mesh blocks
-  const std::vector<Index3D> cleared_mesh_blocks_vec(
-      cleared_mesh_blocks_.begin(), cleared_mesh_blocks_.end());
+  // Get the vector of cleared  blocks
+  const std::vector<Index3D> cleared_blocks_vec(cleared_blocks_.begin(),
+                                                cleared_blocks_.end());
   // Clear the set.
-  cleared_mesh_blocks_.clear();
-  return cleared_mesh_blocks_vec;
+  cleared_blocks_.clear();
+  return cleared_blocks_vec;
 }
 
 std::vector<Index3D> Mapper::getBlocksToUpdate(
@@ -533,22 +634,23 @@ std::vector<Index3D> Mapper::getBlocksToUpdate(
 
 void Mapper::clearBlocksInLayers(const std::vector<Index3D>& blocks_to_clear) {
   // Clear the mesh and color blocks.
-  layers_.getPtr<ColorLayer>()->clearBlocks(blocks_to_clear);
+  layers_.getPtr<ColorLayer>()->clearBlocksAsync(blocks_to_clear,
+                                                 *cuda_stream_);
   if (hasTsdfLayer(projective_layer_type_)) {
-    layers_.getPtr<MeshLayer>()->clearBlocks(blocks_to_clear);
-    // We need to keep track of cleared mesh blocks to delete them in our
-    // visualizer.
-    cleared_mesh_blocks_.insert(blocks_to_clear.begin(), blocks_to_clear.end());
+    layers_.getPtr<MeshLayer>()->clearBlocksAsync(blocks_to_clear,
+                                                  *cuda_stream_);
   }
   // Clear the freespace blocks, if existent.
   if (hasFreespaceLayer(projective_layer_type_)) {
-    layers_.getPtr<FreespaceLayer>()->clearBlocks(blocks_to_clear);
+    layers_.getPtr<FreespaceLayer>()->clearBlocksAsync(blocks_to_clear,
+                                                       *cuda_stream_);
   }
 
   // Clear the blocks in the esdf layer.
   if (esdf_mode_ == EsdfMode::k3D) {
     // In the 3D case this is easy.
-    layers_.getPtr<EsdfLayer>()->clearBlocks(blocks_to_clear);
+    layers_.getPtr<EsdfLayer>()->clearBlocksAsync(blocks_to_clear,
+                                                  *cuda_stream_);
   } else {
     // In the 2D case we need to check if an occupancy/tsdf block is left in the
     // vertical column (z-axis) for every 2d esdf block.
@@ -557,15 +659,18 @@ void Mapper::clearBlocksInLayers(const std::vector<Index3D>& blocks_to_clear) {
     const float block_size = layers_.get<EsdfLayer>().block_size();
     const int min_slice_bound_index_z =
         getBlockIndexFromPositionInLayer(
-            block_size, Vector3f(0.0f, 0.0f, esdf_slice_min_height_))
+            block_size,
+            Vector3f(0.0f, 0.0f, esdf_integrator().esdf_slice_min_height()))
             .z();
     const int max_slice_bound_index_z =
         getBlockIndexFromPositionInLayer(
-            block_size, Vector3f(0.0f, 0.0f, esdf_slice_max_height_))
+            block_size,
+            Vector3f(0.0f, 0.0f, esdf_integrator().esdf_slice_max_height()))
             .z();
     const int esdf_index_z =
         getBlockIndexFromPositionInLayer(
-            block_size, Vector3f(0.0f, 0.0f, esdf_slice_height_))
+            block_size,
+            Vector3f(0.0f, 0.0f, esdf_integrator().esdf_slice_height()))
             .z();
     CHECK_GE(max_slice_bound_index_z, min_slice_bound_index_z);
     const size_t num_blocks_in_vertical_column =
@@ -599,13 +704,18 @@ void Mapper::clearBlocksInLayers(const std::vector<Index3D>& blocks_to_clear) {
       if (!has_block_in_column) {
         // No corresponding projective block found. So let's clear this esdf
         // block.
-        layers_.getPtr<EsdfLayer>()->clearBlock(esdf_block_index);
+        layers_.getPtr<EsdfLayer>()->clearBlockAsync(esdf_block_index,
+                                                     *cuda_stream_);
       }
     }
   }
 
   // We don't need to update the deallocated blocks.
   blocks_to_update_tracker_.removeBlocksToUpdate(blocks_to_clear);
+
+  // We need to keep track of cleared blocks to delete them in our
+  // visualizer.
+  cleared_blocks_.insert(blocks_to_clear.begin(), blocks_to_clear.end());
 }
 
 bool Mapper::saveLayerCake(const std::string& filename) const {
@@ -688,11 +798,6 @@ parameters::ParameterTreeNode Mapper::getParameterTree(
        ParameterTreeNode("do_depth_preprocessing", do_depth_preprocessing_),
        ParameterTreeNode("depth_preprocessing_num_dilations",
                          depth_preprocessing_num_dilations_),
-       ParameterTreeNode("mesh_bandwidth_limit_mbps",
-                         mesh_bandwidth_limit_mbps_),
-       ParameterTreeNode("esdf_slice_min_height", esdf_slice_min_height_),
-       ParameterTreeNode("esdf_slice_max_height", esdf_slice_max_height_),
-       ParameterTreeNode("esdf_slice_height", esdf_slice_height_),
        ParameterTreeNode("exclude_last_view_from_decay",
                          exclude_last_view_from_decay_),
        tsdf_integrator_.getParameterTree("camera_tsdf_integrator"),
@@ -701,9 +806,7 @@ parameters::ParameterTreeNode Mapper::getParameterTree(
        occupancy_integrator_.getParameterTree("camera_occupancy_integrator"),
        lidar_occupancy_integrator_.getParameterTree(
            "lidar_occupancy_integrator"),
-       esdf_integrator_.getParameterTree(),
-       mesh_integrator_.getParameterTree(),
-       mesh_streamer_.getParameterTree(),
+       esdf_integrator_.getParameterTree(), mesh_integrator_.getParameterTree(),
        occupancy_decay_integrator_.getParameterTree(),
        tsdf_decay_integrator_.getParameterTree(),
        freespace_integrator_.getParameterTree()});
@@ -711,6 +814,124 @@ parameters::ParameterTreeNode Mapper::getParameterTree(
 
 std::string Mapper::getParametersAsString() const {
   return parameterTreeToString(getParameterTree());
+}
+
+std::shared_ptr<const SerializedMeshLayer> Mapper::serializedMeshLayer() {
+  return layer_streamers_.getSerializedLayer<MeshLayer>();
+}
+
+std::shared_ptr<const SerializedTsdfLayer> Mapper::serializedTsdfLayer() {
+  return layer_streamers_.getSerializedLayer<TsdfLayer>();
+}
+
+std::shared_ptr<const SerializedOccupancyLayer>
+Mapper::serializedOccupancyLayer() {
+  return layer_streamers_.getSerializedLayer<OccupancyLayer>();
+}
+
+std::shared_ptr<const SerializedFreespaceLayer>
+Mapper::serializedFreespaceLayer() {
+  return layer_streamers_.getSerializedLayer<FreespaceLayer>();
+}
+
+std::shared_ptr<const SerializedEsdfLayer> Mapper::serializedEsdfLayer() {
+  return layer_streamers_.getSerializedLayer<EsdfLayer>();
+}
+
+std::shared_ptr<const SerializedColorLayer> Mapper::serializedColorLayer() {
+  return layer_streamers_.getSerializedLayer<ColorLayer>();
+}
+
+void Mapper::serializeColorTsdfAndFreespaceLayers(
+    const std::vector<Index3D>& blocks_to_serialize,
+    const LayerTypeBitMask layer_type_bitmask, const float bandwidth_limit_mbps,
+    const BlockExclusionParams& exclusion_params) {
+  // Color layer doesn't contain any geometry. Therefore we first need to
+  // serialize the TSDF layer and make sure that the color layer is serialized
+  // with the same block indices.
+  CHECK(layer_type_bitmask & LayerType::kTsdf);
+
+  // Serialize TSDF
+  layer_streamers_.estimateBandwidthAndSerialize(
+      tsdf_layer(), blocks_to_serialize, "tsdf", exclusion_params,
+      bandwidth_limit_mbps, *cuda_stream_);
+
+  // Serialize color
+  layer_streamers_.serializeAllBlocks(
+      color_layer(), serializedTsdfLayer()->block_indices, *cuda_stream_);
+  CHECK_EQ(serializedTsdfLayer()->block_indices.size(),
+           serializedColorLayer()->block_indices.size());
+
+  // Optionally serialize freespace
+  if (projective_layer_type() == ProjectiveLayerType::kTsdfWithFreespace &&
+      layer_type_bitmask & LayerType::kFreespace) {
+    layer_streamers_.serializeAllBlocks(
+        freespace_layer(), serializedTsdfLayer()->block_indices, *cuda_stream_);
+    CHECK_EQ(serializedFreespaceLayer()->block_indices.size(),
+             serializedColorLayer()->block_indices.size());
+  }
+}
+
+void Mapper::serializeSelectedLayers(
+    const LayerTypeBitMask layer_type_bitmask, const float bandwidth_limit_mbps,
+    const BlockExclusionParams& exclusion_params) {
+  // Figure out which blocks to serialize
+  // Note that all layers need to be serialized simultaneously since they all
+  // share the same BlocksToUpdate tracker
+  std::vector<Index3D> blocks_to_serialize =
+      blocks_to_update_tracker_.getBlocksToUpdate(
+          BlocksToUpdateType::kLayerStreamer);
+
+  // Color layer is handled separately since we also need to serialize geometry
+  // blocks in order to visualize it.
+  if (layer_type_bitmask & LayerType::kColor) {
+    serializeColorTsdfAndFreespaceLayers(
+        blocks_to_serialize, layer_type_bitmask, bandwidth_limit_mbps,
+        exclusion_params);
+  } else {
+    // Mesh
+    if (layer_type_bitmask & LayerType::kMesh) {
+      layer_streamers_.estimateBandwidthAndSerialize(
+          mesh_layer(), blocks_to_serialize, "mesh", exclusion_params,
+          bandwidth_limit_mbps, *cuda_stream_);
+    }
+
+    // TSDF layer
+    if (layer_type_bitmask & LayerType::kTsdf) {
+      layer_streamers_.estimateBandwidthAndSerialize(
+          tsdf_layer(), blocks_to_serialize, "tsdf", exclusion_params,
+          bandwidth_limit_mbps, *cuda_stream_);
+    }
+
+    // ESDF layer
+    if (layer_type_bitmask & LayerType::kEsdf) {
+      layer_streamers_.estimateBandwidthAndSerialize(
+          esdf_layer(), blocks_to_serialize, "esdf", exclusion_params,
+          bandwidth_limit_mbps, *cuda_stream_);
+    }
+
+    // Occupancy layer
+    if (layer_type_bitmask & LayerType::kOccupancy) {
+      layer_streamers_.estimateBandwidthAndSerialize(
+          occupancy_layer(), blocks_to_serialize, "occupancy", exclusion_params,
+          bandwidth_limit_mbps, *cuda_stream_);
+    }
+
+    // Freespace layer
+    if (layer_type_bitmask & LayerType::kFreespace) {
+      layer_streamers_.estimateBandwidthAndSerialize(
+          freespace_layer(), blocks_to_serialize, "freespace", exclusion_params,
+          bandwidth_limit_mbps, *cuda_stream_);
+    }
+  }
+
+  // Keep track of serialized blocks
+  blocks_to_update_tracker_.markBlocksAsUpdated(
+      BlocksToUpdateType::kLayerStreamer);
+}
+
+void Mapper::markBlocksForUpdate(const std::vector<Index3D>& blocks) {
+  blocks_to_update_tracker_.addBlocksToUpdate(blocks);
 }
 
 }  // namespace nvblox

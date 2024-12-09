@@ -26,7 +26,7 @@ namespace io {
 bool outputMeshLayerToPly(const BlockLayer<MeshBlock>& layer,
                           const std::string& filename) {
   // TODO: doesn't support intensity yet!!!!
-  const Mesh mesh = Mesh::fromLayer(layer);
+  const Mesh mesh = Mesh::fromLayer(layer, CudaStreamOwning());
 
   // Create the ply writer object
   io::PlyWriter writer(filename);

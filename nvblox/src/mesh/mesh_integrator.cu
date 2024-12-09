@@ -233,7 +233,7 @@ bool MeshIntegrator::getTriangleCandidatesAroundVoxel(
     const Index3D& voxel_index, const Vector3f& voxel_position,
     const float voxel_size,
     marching_cubes::PerVoxelMarchingCubesResults* neighbors) {
-  DCHECK_EQ(neighbor_blocks.size(), 8);
+  DCHECK_EQ(neighbor_blocks.size(), 8U);
   constexpr int kVoxelsPerSide = VoxelBlock<bool>::kVoxelsPerSide;
   for (unsigned int i = 0; i < 8; ++i) {
     Index3D corner_index = voxel_index + cube_index_offsets_.col(i);
@@ -493,7 +493,8 @@ void MeshIntegrator::getMeshableBlocksGPU(
 
   // Collect all the meshable blocks as raw pointers.
   // Get all the block pointers and positions.
-  block_ptrs_host_.resize(block_indices.size());
+  block_ptrs_host_.resizeAsync(block_indices.size(), *cuda_stream_);
+  cuda_stream_->synchronize();
 
   for (size_t i = 0; i < block_indices.size(); i++) {
     block_ptrs_host_[i] =
@@ -544,8 +545,10 @@ void MeshIntegrator::meshBlocksGPU(const TsdfLayer& distance_layer,
   // Get all the block pointers and positions.
   // Block pointers are actually a 2D array of also the neighbor block pointers
   // The neighbors CAN be null so they need to be checked.
-  block_ptrs_host_.resize(block_indices.size() * kCubeNeighbors);
-  block_positions_host_.resize(block_indices.size());
+  block_ptrs_host_.resizeAsync(block_indices.size() * kCubeNeighbors,
+                               *cuda_stream_);
+  block_positions_host_.resizeAsync(block_indices.size(), *cuda_stream_);
+  cuda_stream_->synchronize();
   for (size_t i = 0; i < block_indices.size(); i++) {
     block_ptrs_host_[i * kCubeNeighbors] =
         distance_layer.getBlockAtIndex(block_indices[i]).get();
@@ -562,7 +565,7 @@ void MeshIntegrator::meshBlocksGPU(const TsdfLayer& distance_layer,
   }
 
   // Create an output mesh blocks vector..
-  mesh_blocks_host_.resize(block_indices.size());
+  mesh_blocks_host_.resizeAsync(block_indices.size(), *cuda_stream_);
   mesh_blocks_host_.setZeroAsync(*cuda_stream_);
 
   block_ptrs_device_.copyFromAsync(block_ptrs_host_, *cuda_stream_);
@@ -663,10 +666,11 @@ void MeshIntegrator::meshBlocksGPU(const TsdfLayer& distance_layer,
       if (output_block == nullptr) {
         continue;
       }
-      output_block->vertices.resize(new_size);
-      output_block->normals.resize(new_size);
+      output_block->vertices.resizeAsync(new_size, *cuda_stream_);
+      output_block->normals.resizeAsync(new_size, *cuda_stream_);
     }
   }
+  cuda_stream_->synchronize();
 }
 
 template <int kBlockThreads, int kItemsPerThread>

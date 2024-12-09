@@ -38,14 +38,11 @@ class Pointcloud {
   Pointcloud(Pointcloud&& other) = default;
   Pointcloud& operator=(Pointcloud&& other) = default;
   Pointcloud(const Pointcloud& other) = delete;
-  void copyFrom(const Pointcloud& other);
-  void copyFromAsync(const Pointcloud& other, const CudaStream cuda_stream);
-  void copyFrom(const std::vector<Vector3f>& points);
+  void copyFromAsync(const Pointcloud& other, const CudaStream& cuda_stream);
   void copyFromAsync(const std::vector<Vector3f>& points,
-                     const CudaStream cuda_stream);
-  void copyFrom(const unified_vector<Vector3f>& points);
+                     const CudaStream& cuda_stream);
   void copyFromAsync(const unified_vector<Vector3f>& points,
-                     const CudaStream cuda_stream);
+                     const CudaStream& cuda_stream);
 
   /// Deep copy constructor (second can be used to transition memory type)
   /// Pointcloud(const Pointcloud& other);
@@ -53,7 +50,7 @@ class Pointcloud {
   Pointcloud& operator=(const Pointcloud& other);
 
   /// Expand memory available
-  void resizeAsync(int num_points, const CudaStream cuda_stream) {
+  void resizeAsync(int num_points, const CudaStream& cuda_stream) {
     points_.resizeAsync(num_points, cuda_stream);
   }
   void resize(int num_points) {
@@ -85,7 +82,9 @@ class Pointcloud {
   inline const Vector3f* dataConstPtr() const { return points_.data(); }
 
   /// Set the image to 0.
-  void setZero() { points_.setZero(); }
+  void setZeroAsync(const CudaStream& cuda_stream) {
+    points_.setZeroAsync(cuda_stream);
+  }
 
  protected:
   unified_vector<Vector3f> points_;

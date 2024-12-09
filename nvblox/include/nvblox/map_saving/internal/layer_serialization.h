@@ -38,7 +38,7 @@ std::vector<Index3D> getLayerDataIndices(const LayerType& layer);
 template <typename LayerType>
 std::vector<Byte> serializeLayerDataAtIndex(const LayerType& layer,
                                             const Index3D& index,
-                                            const CudaStream cuda_stream);
+                                            const CudaStream& cuda_stream);
 
 // Block specializations
 template <typename VoxelType>
@@ -52,7 +52,7 @@ std::vector<Index3D> getLayerDataIndices(
 template <typename VoxelType>
 std::vector<Byte> serializeLayerDataAtIndex(
     const VoxelBlockLayer<VoxelType>& layer, const Index3D& index,
-    const CudaStream cuda_stream);
+    const CudaStream& cuda_stream);
 
 // ------------------- Deserialization ----------------------
 

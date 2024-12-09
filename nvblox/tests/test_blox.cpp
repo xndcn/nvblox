@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 #include <gtest/gtest.h>
+#include <numeric>
 
 #include "nvblox/core/unified_ptr.h"
 #include "nvblox/map/accessors.h"
@@ -88,6 +89,88 @@ TEST(BloxTest, ColorInitialization) {
   zero_voxel.color.a = 0;
   zero_voxel.weight = 0.0f;
   EXPECT_FALSE(test_utils::checkBlockAllConstant(block_device_ptr, zero_voxel));
+}
+
+// Check that the iterator's indices are identical to indices computed the
+// cumbersome way with triple loops
+TEST(BloxTest, IteratorIndex) {
+  struct Index3dVoxel {
+    Index3D index;
+  };
+
+  auto block = VoxelBlock<Index3dVoxel>::allocate(MemoryType::kHost);
+  for (int x = 0; x < VoxelBlock<Index3dVoxel>::kVoxelsPerSide; ++x) {
+    for (int y = 0; y < VoxelBlock<Index3dVoxel>::kVoxelsPerSide; ++y) {
+      for (int z = 0; z < VoxelBlock<Index3dVoxel>::kVoxelsPerSide; ++z) {
+        block->voxels[x][y][z].index = {x, y, z};
+      }
+    }
+  }
+
+  // Forward iterator
+  for (auto itr = block->begin(); itr != block->end(); ++itr) {
+    EXPECT_EQ(itr.index(), itr->index);
+  }
+
+  // Const iterator
+  for (auto itr = block->cbegin(); itr != block->cend(); ++itr) {
+    EXPECT_EQ(itr.index(), itr->index);
+  }
+}
+
+TEST(BloxTest, RangeBasedIterator) {
+  struct IndexVoxel {
+    int index;
+  };
+  auto block = VoxelBlock<IndexVoxel>::allocate(MemoryType::kHost);
+
+  int index = 0;
+  for (int x = 0; x < VoxelBlock<IndexVoxel>::kVoxelsPerSide; ++x) {
+    for (int y = 0; y < VoxelBlock<IndexVoxel>::kVoxelsPerSide; ++y) {
+      for (int z = 0; z < VoxelBlock<IndexVoxel>::kVoxelsPerSide; ++z) {
+        block->voxels[x][y][z].index = index++;
+      }
+    }
+  }
+
+  // Test non-const range based iterator
+  index = 0;
+  for (auto& voxel : *block) {
+    EXPECT_EQ(voxel.index, index++);
+  }
+
+  // Test const range based iterator
+  index = 0;
+  for (const auto& voxel : *block) {
+    EXPECT_EQ(voxel.index, index++);
+  }
+}
+
+TEST(BloxTest, initializeBlocksAsync) {
+  // Set a bunch of blocks to something non-zero
+  unified_vector<TsdfBlock> blocks(100);
+  for (auto& block : blocks) {
+    for (auto& voxel : block) {
+      voxel.weight = 11.0;
+      voxel.distance = 11.0;
+    }
+  }
+
+  // Get pointers
+  host_vector<TsdfBlock*> block_ptrs;
+  for (auto& block : blocks) {
+    block_ptrs.push_back(&block);
+  }
+
+  // Call batch-initialization and check that they're all zero now
+  initializeBlocksAsync(block_ptrs, CudaStreamOwning());
+
+  for (auto& block : blocks) {
+    for (auto& voxel : block) {
+      EXPECT_EQ(voxel.weight, 0.F);
+      EXPECT_EQ(voxel.distance, 0.F);
+    }
+  }
 }
 
 int main(int argc, char** argv) {

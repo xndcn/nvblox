@@ -85,8 +85,9 @@ void drawSquare(const int start_row, const int start_col, const int num_rows,
 void createMaskImage(MonoImage* mask, MaskImageType type) {
   const int32_t kWidth = 640;
   const int32_t kHeight = 480;
-  *mask = MonoImage(kHeight, kWidth, MemoryType::kHost);
-  mask->setZero();
+  CHECK_NOTNULL(mask);
+  mask->resizeAsync(kHeight, kWidth, CudaStreamOwning());
+  mask->setZeroAsync(CudaStreamOwning());
 
   CHECK(mask->memory_type() != MemoryType::kDevice);
 
@@ -98,19 +99,19 @@ void createMaskImage(MonoImage* mask, MaskImageType type) {
       break;
     }
     case MaskImageType::kEverythingZero: {
-      mask->setZero();
+      mask->setZeroAsync(CudaStreamOwning());
       break;
     }
     case MaskImageType::kEverythingFilled: {
       for (int i = 0; i < mask->numel(); ++i) {
-        (*mask)(i) = 1;
+        (*mask)(i) = 255;
       }
       break;
     }
     case MaskImageType::kGrid: {
-      for (int row = 0; row < mask->rows(); row += 2) {
-        for (int col = 0; col < mask->cols(); col += 2) {
-          (*mask)(row, col) = 1;
+      for (int row = 0; row < mask->rows(); row += 4) {
+        for (int col = 0; col < mask->cols(); col += 4) {
+          (*mask)(row, col) = 255;
         }
       }
       break;

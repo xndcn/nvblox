@@ -54,7 +54,8 @@ class MeshSerializerGpuTestFixture : public ::testing::Test {
     for (auto index : all_indices) {
       MeshBlock* mesh_block = mesh_layer_->getBlockAtIndex(index).get();
 
-      mesh_block->colors.resize(mesh_block->vertices.size());
+      mesh_block->colors.resizeAsync(mesh_block->vertices.size(),
+                                     CudaStreamOwning());
       for (size_t i = 0; i < mesh_block->colors.size(); ++i) {
         mesh_block->colors[i] = Color(i % 256, i % 256, i % 256, i % 256);
       }
@@ -63,8 +64,8 @@ class MeshSerializerGpuTestFixture : public ::testing::Test {
 
   void validateSerializedMesh(
       const std::vector<nvblox::Index3D>& serialized_block_indices) {
-    const std::shared_ptr<const SerializedMesh> result =
-        serializer_.getSerializedMesh();
+    const std::shared_ptr<const SerializedMeshLayer> result =
+        serializer_.getSerializedLayer();
     ASSERT_EQ(result->vertex_block_offsets.size(),
               serialized_block_indices.size() + 1);
     ASSERT_EQ(result->triangle_index_block_offsets.size(),
@@ -132,8 +133,8 @@ TEST_F(MeshSerializerGpuTestFixture, serializeAllBlocks) {
       mesh_layer_->getAllBlockIndices();
   EXPECT_FALSE(block_indices_to_serialize.empty());
 
-  serializer_.serializeMesh(*(mesh_layer_.get()), block_indices_to_serialize,
-                            CudaStreamOwning());
+  serializer_.serialize(*(mesh_layer_.get()), block_indices_to_serialize,
+                        CudaStreamOwning());
 
   validateSerializedMesh(block_indices_to_serialize);
 }
@@ -151,8 +152,8 @@ TEST_F(MeshSerializerGpuTestFixture, serializeSomeblocks) {
       all_indices.begin(),
       std::next(all_indices.begin(), num_blocks_to_serialize));
 
-  serializer_.serializeMesh(*(mesh_layer_.get()), block_indices_to_serialize,
-                            CudaStreamOwning());
+  serializer_.serialize(*(mesh_layer_.get()), block_indices_to_serialize,
+                        CudaStreamOwning());
 
   validateSerializedMesh(block_indices_to_serialize);
 }
@@ -161,8 +162,8 @@ TEST_F(MeshSerializerGpuTestFixture, serializeFirstBlock) {
   const std::vector<Index3D> block_indices_to_serialize = {
       mesh_layer_->getAllBlockIndices().front()};
 
-  serializer_.serializeMesh(*(mesh_layer_.get()), block_indices_to_serialize,
-                            CudaStreamOwning());
+  serializer_.serialize(*(mesh_layer_.get()), block_indices_to_serialize,
+                        CudaStreamOwning());
 
   validateSerializedMesh(block_indices_to_serialize);
 }
@@ -171,8 +172,8 @@ TEST_F(MeshSerializerGpuTestFixture, serializeLastBlock) {
   const std::vector<Index3D> block_indices_to_serialize = {
       mesh_layer_->getAllBlockIndices().back()};
 
-  serializer_.serializeMesh(*(mesh_layer_.get()), block_indices_to_serialize,
-                            CudaStreamOwning());
+  serializer_.serialize(*(mesh_layer_.get()), block_indices_to_serialize,
+                        CudaStreamOwning());
 
   validateSerializedMesh(block_indices_to_serialize);
 }
@@ -180,9 +181,9 @@ TEST_F(MeshSerializerGpuTestFixture, serializeLastBlock) {
 TEST_F(MeshSerializerGpuTestFixture, serializeNoBlocks) {
   const std::vector<Index3D> block_indices_to_serialize;
 
-  const std::shared_ptr<const SerializedMesh> result =
-      serializer_.serializeMesh(*(mesh_layer_.get()),
-                                block_indices_to_serialize, CudaStreamOwning());
+  const std::shared_ptr<const SerializedMeshLayer> result =
+      serializer_.serialize(*(mesh_layer_.get()), block_indices_to_serialize,
+                            CudaStreamOwning());
 
   ASSERT_TRUE(result->vertices.empty());
   ASSERT_TRUE(result->colors.empty());
@@ -196,7 +197,7 @@ TEST(MeshSerializerGpuTest, serializeOneEmptyBlock) {
   mesh_layer.allocateBlockAtIndex(index);
 
   MeshSerializerGpu serializer;
-  serializer.serializeMesh(mesh_layer, {index}, CudaStreamOwning());
+  serializer.serialize(mesh_layer, {index}, CudaStreamOwning());
 }
 
 int main(int argc, char** argv) {

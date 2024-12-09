@@ -1,5 +1,5 @@
 /*
-Copyright 2023 NVIDIA CORPORATION
+Copyright 2023-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -67,16 +67,20 @@ class CircularBuffer {
   bool full_ = false;
 };
 
+/// @brief  A functor returning the current timestamp in nanoseconds.
+using GetTimestampFunctor = std::function<int64_t()>;
+
 class Ticker {
  public:
   Ticker() = default;
   virtual ~Ticker() = default;
 
-  /// Adds a timestamp to the window of timestamps used to calculate the average
-  /// rate. The window is a circular buffer so new measurements kick out old
-  /// measurements once the window is full.
-  /// @param timestamp_ns The timestamp in nanoseconds
-  void tick(int64_t timestamp_ns);
+  /// @brief Adds a timestamp to the window of timestamps used to calculate the
+  /// average rate. The window is a circular buffer so new measurements kick out
+  /// old measurements once the window is full.
+  /// @param get_timestamp_ns_functor Functor called to get the current
+  /// timestamp in nanoseconds.
+  void tick(GetTimestampFunctor get_timestamp_ns_functor);
 
   /// Gets the average rate that the ticker was ticked over the window.
   /// @return The mean tick-rate in Hz
@@ -93,15 +97,10 @@ class Ticker {
   CircularBuffer<int64_t, kBufferLength> circular_buffer_;
 };
 
-/// A class named after the greatest RPG of all time. Also, a rate ticker that
-/// uses the system clock through std::chrono.
-class ChronoTicker : public Ticker {
- public:
-  ChronoTicker() = default;
-  virtual ~ChronoTicker() = default;
-
-  /// Add a timestamp sample to the buffer used for rate estimation.
-  void tick();
+/// @brief A functor returning the current timestamp in nanoseconds by using the
+/// system clock through std::chrono.
+struct GetChronoTimestampFunctor {
+  int64_t operator()() const;
 };
 
 class Rates {
@@ -111,6 +110,12 @@ class Rates {
   /// the rate and adds it to a running average measurement.
   /// @param tag A unique string identifying this rate-measurer.
   static void tick(const std::string& tag);
+
+  /// @brief Setting the functor for getting a timestamp in nanoseconds when
+  /// ticking.
+  /// @param get_timestamp_ns_functor The new functor to set.
+  static void setGetTimestampFunctor(
+      GetTimestampFunctor get_timestamp_ns_functor);
 
   /// Output interface. Prints a table of the rates of the ticked tags.
   /// @param out The stream to be printed to.
@@ -128,7 +133,7 @@ class Rates {
   /// already exist we create a new ticker with this tag and return it.
   /// @param tag A unique string identifying this rates-measurer
   /// @return A reference to the ticker doing the rate calculation.
-  static ChronoTicker& getTicker(const std::string& tag);
+  static Ticker& getTicker(const std::string& tag);
 
   /// Gets the mean rate current calculated by one of the rate-measurers
   /// @param tag The tag of the rate-measurer.
@@ -146,16 +151,17 @@ class Rates {
   static bool exists(const std::string& tag);
 
  protected:
-  Rates() = default;
+  Rates() : get_timestamp_ns_functor_(GetChronoTimestampFunctor()){};
   ~Rates() = default;
 
   // Formats a floating point rate for writing to our table string.
   static std::string rateToString(float rate_hz);
 
-  using TickerMap = std::unordered_map<std::string, ChronoTicker>;
+  using TickerMap = std::unordered_map<std::string, Ticker>;
 
   std::mutex mutex_;
   TickerMap tickers_;
+  GetTimestampFunctor get_timestamp_ns_functor_;
   size_t max_tag_length_ = 0;
 };
 

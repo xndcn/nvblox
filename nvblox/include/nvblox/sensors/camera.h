@@ -170,8 +170,8 @@ class Camera {
 std::ostream& operator<<(std::ostream& os, const Camera& camera);
 
 // Check if two cameras have the same intrinsics/extrinsics
-bool camerasAreEquivalent(const Camera& camera_1, const Camera& camera_2,
-                          const Transform& T_L_C1, const Transform& T_L_C2);
+bool areCamerasEqual(const Camera& camera_1, const Camera& camera_2,
+                     const Transform& T_L_C1, const Transform& T_L_C2);
 
 /// A bounding plane which has one "inside" direction and the other direction is
 /// "outside." Allows to query for which side of the plane you are on.

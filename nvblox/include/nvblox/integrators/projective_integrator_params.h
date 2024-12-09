@@ -52,4 +52,29 @@ constexpr Param<float>::Description kProjectiveIntegratorMaxWeightParamDesc{
     "Maximum weight for the TSDF and color integrations. Setting this number "
     "higher will lead to higher-quality reconstructions but worse "
     "performance in dynamic scenes."};
+
+constexpr Param<
+    float>::Description kProjectiveTsdfIntegratorInvalidDepthDecayFactor{
+    "projective_tsdf_integrator_invalid_depth_decay_factor", -1.0,
+    "Whenever a voxel projects into an invalid (<=0) depth image pixel, we "
+    "decay the voxel with this factor instead of integrating. This allow us to "
+    "rapidly prune outliers stemming from dynamic objects and/or invalid "
+    "sensor data. A negative value for this parameter disables the effect,"
+    "i.e. no decay takes place."};
+
+struct ProjectiveIntegratorParams {
+  Param<float> projective_integrator_max_integration_distance_m{
+      kProjectiveIntegratorMaxIntegrationDistanceMParamDesc};
+  Param<float> lidar_projective_integrator_max_integration_distance_m{
+      kLidarProjectiveIntegratorMaxIntegrationDistanceMParamDesc};
+  Param<float> projective_integrator_truncation_distance_vox{
+      kProjectiveIntegratorTruncationDistanceVoxParamDesc};
+  Param<WeightingFunctionType> projective_integrator_weighting_mode{
+      kProjectiveIntegratorWeightingModeParamDesc};
+  Param<float> projective_integrator_max_weight{
+      kProjectiveIntegratorMaxWeightParamDesc};
+  Param<float> projective_tsdf_integrator_invalid_depth_decay_factor{
+      kProjectiveTsdfIntegratorInvalidDepthDecayFactor};
+};
+
 }  // namespace nvblox

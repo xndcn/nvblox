@@ -78,10 +78,11 @@ void EsdfQueryExample::createMap() {
   io::outputVoxelLayerToPly(mapper_->esdf_layer(), "esdf_query_map.ply");
 }
 
-__global__ void queryDistancesKernel(
-    size_t num_queries, Index3DDeviceHashMapType<EsdfBlock> block_hash,
-    float block_size, Vector3f* query_locations, float* query_distances,
-    Vector3f* query_nearest_points) {
+__global__ void queryESDFKernel(size_t num_queries,
+                                Index3DDeviceHashMapType<EsdfBlock> block_hash,
+                                float block_size, Vector3f* query_locations,
+                                float* query_distances,
+                                Vector3f* query_nearest_points) {
   constexpr int kNumVoxelsPerBlock = 8;
   const float voxel_size = block_size / kNumVoxelsPerBlock;
   // Figure out which point this thread should be querying.
@@ -127,15 +128,15 @@ void EsdfQueryExample::queryMap(size_t num_queries) {
 
   // Move this vector to the GPU.
   device_vector<Vector3f> query_points_device;
-  query_points_device.copyFrom(query_points);
+  query_points_device.copyFromAsync(query_points, CudaStreamOwning());
   // Create the output vectors which live in device memory.
   device_vector<float> distances_device(num_queries);
   device_vector<Vector3f> nearest_point_device(num_queries);
 
   // GPU hash transfer timer
   timing::Timer hash_transfer_timer("query/hash_transfer");
-  GPULayerView<EsdfBlock> gpu_layer_view =
-      mapper_->esdf_layer().getGpuLayerView();
+  GPULayerView<EsdfBlock>& gpu_layer_view =
+      mapper_->esdf_layer().getGpuLayerView(CudaStreamOwning());
   hash_transfer_timer.Stop();
 
   // Call a kernel.
@@ -145,7 +146,7 @@ void EsdfQueryExample::queryMap(size_t num_queries) {
   int num_blocks = num_queries / kNumThreads + 1;
 
   // Call the kernel.
-  queryDistancesKernel<<<num_blocks, kNumThreads>>>(
+  queryESDFKernel<<<num_blocks, kNumThreads>>>(
       num_queries, gpu_layer_view.getHash().impl_,
       mapper_->esdf_layer().block_size(), query_points_device.data(),
       distances_device.data(), nearest_point_device.data());
@@ -156,7 +157,8 @@ void EsdfQueryExample::queryMap(size_t num_queries) {
   // to get them back out on the host.
   // This just outputs a pointcloud of all the query points & distances.
   io::PlyWriter writer("esdf_query_results.ply");
-  std::vector<float> distances_host = distances_device.toVector();
+  std::vector<float> distances_host =
+      distances_device.toVectorAsync(CudaStreamOwning());
   writer.setPoints(&query_points);
   writer.setIntensities(&distances_host);
   writer.write();

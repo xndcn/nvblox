@@ -49,10 +49,8 @@ TEST(LayerCakeTest, addAndRetrieve) {
 
 TEST(LayerCakeTest, create) {
   // Bring in a custom test layer
-  using BooleanLayer = BlockLayer<BooleanBlock>;
-
-  // Create
   const float voxel_size = 0.1f;
+
   auto cake = LayerCake::create<TsdfLayer, ColorLayer, EsdfLayer, BooleanLayer>(
       voxel_size, MemoryType::kUnified);
 
@@ -109,6 +107,39 @@ TEST(LayerCakeTest, differentMemoryTypes) {
   EXPECT_EQ(cake.get<ColorLayer>().memory_type(), MemoryType::kUnified);
   EXPECT_EQ(cake.get<EsdfLayer>().memory_type(), MemoryType::kHost);
   EXPECT_EQ(cake.get<MeshLayer>().memory_type(), MemoryType::kDevice);
+}
+
+TEST(LayerCakeTest, sharedPtrTest) {
+  const float voxel_size = 0.1f;
+
+  std::shared_ptr<TsdfLayer> tsdf_layer_ptr;
+  std::shared_ptr<const TsdfLayer> tsdf_layer_const_ptr;
+
+  // Put the LayerCake in a disappearing scope
+  {
+    // Create a map
+    LayerCake cake =
+        LayerCake::create<TsdfLayer>(voxel_size, MemoryType::kUnified);
+    // Allocate a block and set a single example
+    auto block_ptr =
+        cake.getPtr<TsdfLayer>()->allocateBlockAtIndex(Index3D(0, 0, 0));
+    block_ptr->voxels[0][0][0].distance = 1.0f;
+    // Get a shared reference to the TSDF Layer.
+    tsdf_layer_ptr = cake.getSharedPtr<TsdfLayer>();
+    tsdf_layer_const_ptr = cake.getConstSharedPtr<TsdfLayer>();
+  }
+
+  // Check that our TsdfLayer is still around.
+  auto block_ptr = tsdf_layer_ptr->getBlockAtIndex(Index3D(0, 0, 0));
+  EXPECT_TRUE(block_ptr);
+  EXPECT_EQ(tsdf_layer_ptr->getBlockAtIndex(Index3D(0, 0, 0))
+                ->voxels[0][0][0]
+                .distance,
+            1.0f);
+  EXPECT_EQ(tsdf_layer_const_ptr->getBlockAtIndex(Index3D(0, 0, 0))
+                ->voxels[0][0][0]
+                .distance,
+            1.0f);
 }
 
 int main(int argc, char** argv) {

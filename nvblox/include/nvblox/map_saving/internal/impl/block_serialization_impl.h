@@ -20,7 +20,7 @@ namespace nvblox {
 template <typename VoxelType>
 std::vector<Byte> serializeBlock(
     const unified_ptr<const VoxelBlock<VoxelType>>& block,
-    const CudaStream cuda_stream) {
+    const CudaStream& cuda_stream) {
   size_t block_size = sizeof(block->voxels);
 
   std::vector<Byte> bytes;
@@ -35,7 +35,7 @@ std::vector<Byte> serializeBlock(
 template <typename VoxelType>
 void deserializeBlock(const std::vector<Byte>& bytes,
                       unified_ptr<VoxelBlock<VoxelType>>& block,
-                      const CudaStream cuda_stream) {
+                      const CudaStream& cuda_stream) {
   CHECK_EQ(bytes.size(), sizeof(block->voxels));
 
   checkCudaErrors(cudaMemcpyAsync((block.get())->voxels, bytes.data(),

@@ -42,7 +42,7 @@ TEST(UnifiedVectorTest, EmptyTest) {
   EXPECT_EQ(vec.size(), 0);
 }
 
-TEST(UnifiedVectorTest, ClearTest) {
+TEST(UnifiedVectorTest, ClearAndDealloc) {
   unified_vector<float> vec(100, 10);
   EXPECT_FALSE(vec.empty());
   EXPECT_NE(vec.data(), nullptr);
@@ -50,7 +50,7 @@ TEST(UnifiedVectorTest, ClearTest) {
   EXPECT_EQ(vec[0], 10);
   EXPECT_EQ(vec[99], 10);
 
-  vec.clear();
+  vec.clearAndDeallocate();
   EXPECT_TRUE(vec.empty());
   EXPECT_EQ(vec.data(), nullptr);
   EXPECT_EQ(vec.size(), 0);
@@ -62,7 +62,7 @@ TEST(UnifiedVectorTest, ClearNoDeallocTest) {
   const float* ptr = vec.data();
   EXPECT_NE(ptr, nullptr);
 
-  vec.clearNoDealloc();
+  vec.clearNoDeallocate();
 
   EXPECT_EQ(vec.data(), ptr);
   EXPECT_TRUE(vec.empty());
@@ -95,7 +95,7 @@ TEST(UnifiedVectorTest, AssignmentTest) {
 
   // Copy the vector over;
   unified_vector<size_t> vec2;
-  vec2.copyFrom(vec);
+  vec2.copyFromAsync(vec, CudaStreamOwning());
 
   EXPECT_FALSE(vec2.empty());
   EXPECT_NE(vec2.data(), nullptr);
@@ -126,7 +126,7 @@ TEST(UnifiedVectorTest, CpuGpuReadWrite) {
 
   const size_t kVectorSize = 100;
   unified_vector<float> vec;
-  vec.resize(kVectorSize);
+  vec.resizeAsync(kVectorSize, CudaStreamOwning());
   test_utils::fillVectorWithConstant(value, &vec);
 
   // Use the operator to check on the HOST
@@ -144,7 +144,7 @@ TEST(UnifiedVectorTest, SetZeroTest) {
   for (size_t i = 0; i < kSize; i++) {
     EXPECT_EQ(vec[i], 1);
   }
-  vec.setZero();
+  vec.setZeroAsync(CudaStreamOwning());
   for (size_t i = 0; i < kSize; i++) {
     EXPECT_EQ(vec[i], 0);
   }
@@ -161,7 +161,7 @@ TEST(UnifiedVectorTest, HostToDeviceToHostCopy) {
 
   // Copy over to unified memory.
   unified_vector<int> vec_unified(MemoryType::kUnified);
-  vec_unified.copyFrom(vec);
+  vec_unified.copyFromAsync(vec, CudaStreamOwning());
   EXPECT_EQ(getPointerMemoryType(vec_unified.data()),
             cudaMemoryType::cudaMemoryTypeManaged);
   for (size_t i = 0; i < kSize; i++) {
@@ -172,12 +172,12 @@ TEST(UnifiedVectorTest, HostToDeviceToHostCopy) {
 
   // Copy over to device memory.
   unified_vector<int> vec_device(MemoryType::kDevice);
-  vec_device.copyFrom(vec_unified);
+  vec_device.copyFromAsync(vec_unified, CudaStreamOwning());
   EXPECT_EQ(getPointerMemoryType(vec_device.data()),
             cudaMemoryType::cudaMemoryTypeDevice);
 
   unified_vector<int> vec_host(MemoryType::kHost);
-  vec_host.copyFrom(vec_device);
+  vec_host.copyFromAsync(vec_device, CudaStreamOwning());
   EXPECT_EQ(getPointerMemoryType(vec_host.data()),
             cudaMemoryType::cudaMemoryTypeHost);
   for (size_t i = 0; i < kSize; i++) {
@@ -200,7 +200,7 @@ TEST(UnifiedVectorTest, HostAndDeviceVectors) {
 
   // To device
   device_vector<int> vec_device;
-  vec_device.copyFrom(vec_host_1);
+  vec_device.copyFromAsync(vec_host_1, CudaStreamOwning());
   EXPECT_TRUE(test_utils::checkAllConstant(vec_device.data(), 1, kNumElems));
   EXPECT_FALSE(test_utils::checkAllConstant(vec_device.data(), 2, kNumElems));
   test_utils::incrementOnGPU(kNumElems, vec_device.data());
@@ -208,18 +208,19 @@ TEST(UnifiedVectorTest, HostAndDeviceVectors) {
 
   // Back to host
   host_vector<int> vec_host_2;
-  vec_host_2.copyFrom(vec_device);
+  vec_host_2.copyFromAsync(vec_device, CudaStreamOwning());
   checkAllConstantCPU(vec_host_2, 2);
 
   // Conversion to std::vector
-  std::vector<int> std_vec_host_1 = vec_device.toVector();
+  std::vector<int> std_vec_host_1 =
+      vec_device.toVectorAsync(CudaStreamOwning());
   checkAllConstantCPU(std_vec_host_1, 2);
 
   // Conversion from std::vector
   std::vector<int> std_vec_host_2(kNumElems, 3);
   checkAllConstantCPU(std_vec_host_2, 3);
   device_vector<int> vec_device_2;
-  vec_device_2.copyFrom(std_vec_host_2);
+  vec_device_2.copyFromAsync(std_vec_host_2, CudaStreamOwning());
   EXPECT_TRUE(test_utils::checkAllConstant(vec_device_2.data(), 3, kNumElems));
 
   // Checking conversion from base class.
@@ -227,7 +228,7 @@ TEST(UnifiedVectorTest, HostAndDeviceVectors) {
   const unified_vector<int>& base_class_reference = std_vec_host_3;
   checkAllConstantCPU(base_class_reference, 4);
   device_vector<int> vec_device_3;
-  vec_device_3.copyFrom(base_class_reference);
+  vec_device_3.copyFromAsync(base_class_reference, CudaStreamOwning());
   EXPECT_TRUE(test_utils::checkAllConstant(vec_device_3.data(), 4, kNumElems));
 }
 
@@ -242,11 +243,52 @@ TEST(UnifiedVectorTest, BoolTest) {
     }
   }
   // Convert
-  std::vector<bool> vec_std = vec_unified.toVector();
+  std::vector<bool> vec_std = vec_unified.toVectorAsync(CudaStreamOwning());
   // Check
   for (int i = 0; i < 100; i++) {
     EXPECT_EQ(vec_unified[i], vec_std[i]);
   }
+}
+
+TEST(UnifiedVectorTest, CopyToRawPtr) {
+  constexpr int kValue = 10;
+
+  std::vector<int> buffer(20, 0);
+  unified_vector<int> vector(10);
+  std::fill(vector.begin(), vector.end(), kValue);
+
+  vector.copyToAsync(buffer.data(), CudaStreamOwning());
+
+  for (size_t i = 0; i < buffer.size(); ++i) {
+    if (i < 10) {
+      EXPECT_EQ(buffer.at(i), kValue);
+    } else {
+      EXPECT_EQ(buffer.at(i), 0);
+    }
+  }
+}
+
+TEST(UnifiedVectorTest, CopyFromRawPtr) {
+  constexpr int kValue = 10;
+  const std::vector<int> buffer(10, kValue);
+  unified_vector<int> vector(20);
+  vector.setZeroAsync(CudaStreamOwning());
+
+  vector.copyFromAsync(buffer.data(), buffer.size(), CudaStreamOwning());
+
+  for (size_t i = 0; i < vector.size(); ++i) {
+    if (i < 10) {
+      EXPECT_EQ(vector[i], kValue);
+    } else {
+      EXPECT_EQ(vector[i], 0);
+    }
+  }
+}
+
+TEST(UnifiedVector, MoveConstruct) {
+  const auto vec = unified_vector<int>(10, MemoryType::kDevice);
+  EXPECT_EQ(vec.size(), 10);
+  EXPECT_EQ(vec.memory_type(), MemoryType::kDevice);
 }
 
 int main(int argc, char** argv) {

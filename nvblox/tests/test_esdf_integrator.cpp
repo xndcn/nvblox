@@ -611,14 +611,18 @@ TEST_P(EsdfIntegratorTest, AllFreespaceTest) {
   empty_scene.generateLayerFromScene(max_distance_, gt_sdf_layer_.get());
 
   // Run the ESDF generation with an empty freespace layer.
-  float min_z = 1.0f;
-  float max_z = 3.0f;
-  float output_z = 2.0f;
+  const float esdf_slice_min_height = 1.0f;
+  const float esdf_slice_max_height = 3.0f;
+  const float esdf_slice_height = 2.0f;
+  esdf_integrator_.esdf_slice_min_height(esdf_slice_min_height);
+  esdf_integrator_.esdf_slice_max_height(esdf_slice_max_height);
+  esdf_integrator_.esdf_slice_height(esdf_slice_height);
+
   std::vector<Index3D> block_indices = tsdf_layer_->getAllBlockIndices();
   esdf_integrator_.integrateBlocks(*tsdf_layer_, *freespace_layer_,
                                    block_indices, freespace_esdf_layer_.get());
   esdf_integrator_.integrateSlice(*tsdf_layer_, *freespace_layer_,
-                                  block_indices, min_z, max_z, output_z,
+                                  block_indices,
                                   freespace_slice_esdf_layer_.get());
 
   // We expect the esdf layer to represent an empty scene, because no sites are
@@ -657,22 +661,25 @@ TEST_P(EsdfIntegratorTest, ActualFreespaceTest) {
   scene_.generateLayerFromScene(4 * voxel_size_, tsdf_layer_.get());
   scene_.generateLayerFromScene(4 * voxel_size_, freespace_layer_.get());
 
-  float min_z = 1.0f;
-  float max_z = 3.0f;
-  float output_z = 2.0f;
+  const float esdf_slice_min_height = 1.0f;
+  const float esdf_slice_max_height = 3.0f;
+  const float esdf_slice_height = 2.0f;
+  esdf_integrator_.esdf_slice_min_height(esdf_slice_min_height);
+  esdf_integrator_.esdf_slice_max_height(esdf_slice_max_height);
+  esdf_integrator_.esdf_slice_height(esdf_slice_height);
   std::vector<Index3D> block_indices = tsdf_layer_->getAllBlockIndices();
 
   // Run the ESDF generation without freespace layer.
   esdf_integrator_.integrateBlocks(*tsdf_layer_, block_indices,
                                    esdf_layer_.get());
-  esdf_integrator_.integrateSlice(*tsdf_layer_, block_indices, min_z, max_z,
-                                  output_z, slice_esdf_layer_.get());
+  esdf_integrator_.integrateSlice(*tsdf_layer_, block_indices,
+                                  slice_esdf_layer_.get());
 
   // Run the ESDF generation with freespace layer.
   esdf_integrator_.integrateBlocks(*tsdf_layer_, *freespace_layer_,
                                    block_indices, freespace_esdf_layer_.get());
   esdf_integrator_.integrateSlice(*tsdf_layer_, *freespace_layer_,
-                                  block_indices, min_z, max_z, output_z,
+                                  block_indices,
                                   freespace_slice_esdf_layer_.get());
 
   // We expect the freespace layer to have not influence because it was built on
@@ -963,12 +970,15 @@ TEST_P(EsdfIntegratorTest, IncrementalEsdfSliceWithObjectRemovalGPU) {
     return;
   }
 
-  float min_z = 1.0f;
-  float max_z = 2.0f;
-  float output_z = 1.5f;
+  const float esdf_slice_min_height = 1.0f;
+  const float esdf_slice_max_height = 2.0f;
+  const float esdf_slice_height = 1.5f;
+  esdf_integrator_.esdf_slice_min_height(esdf_slice_min_height);
+  esdf_integrator_.esdf_slice_max_height(esdf_slice_max_height);
+  esdf_integrator_.esdf_slice_height(esdf_slice_height);
   AxisAlignedBoundingBox aabb(
-      Vector3f(-5.5f, -5.5f, output_z - voxel_size_ / 2.0f),
-      Vector3f(5.5f, 5.5f, output_z + voxel_size_ / 2.0f));
+      Vector3f(-5.5f, -5.5f, esdf_slice_height - voxel_size_ / 2.0f),
+      Vector3f(5.5f, 5.5f, esdf_slice_height + voxel_size_ / 2.0f));
   float tsdf_truncation_distance = 4 * voxel_size_;
 
   addParameterizedObstacleToScene(obstacle);
@@ -999,10 +1009,9 @@ TEST_P(EsdfIntegratorTest, IncrementalEsdfSliceWithObjectRemovalGPU) {
     updated_blocks = tsdf_layer_->getAllBlockIndices();
 
     // Run incremental ESDF generation.
-    esdf_integrator_.integrateSlice(*tsdf_layer_, updated_blocks, min_z, max_z,
-                                    output_z, esdf_layer_.get());
-    esdf_integrator_.integrateSlice(*occupancy_layer_, updated_blocks, min_z,
-                                    max_z, output_z,
+    esdf_integrator_.integrateSlice(*tsdf_layer_, updated_blocks,
+                                    esdf_layer_.get());
+    esdf_integrator_.integrateSlice(*occupancy_layer_, updated_blocks,
                                     occupancy_esdf_layer_.get());
   }
 
@@ -1030,7 +1039,7 @@ TEST_P(EsdfIntegratorTest, IncrementalEsdfSliceWithObjectRemovalGPU) {
   EXPECT_TRUE(validateEsdf(*occupancy_esdf_layer_,
                            max_squared_distance_vox(voxel_size_)));
   if (FLAGS_nvblox_test_file_output) {
-    float slice_height = output_z;
+    float slice_height = esdf_slice_height;
     std::string obstacle_string = std::to_string(static_cast<int>(obstacle));
     io::outputVoxelLayerToPly(*esdf_layer_,
                               "test_slice_" + obstacle_string + "_esdf.ply");

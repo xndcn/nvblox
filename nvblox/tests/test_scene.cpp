@@ -141,6 +141,26 @@ TEST_F(SceneTest, PlaneSceneVerticalOffset) {
   }
 }
 
+TEST_F(SceneTest, TypesList) {
+  scene_.addPrimitive(std::make_unique<primitives::Plane>(
+      Vector3f(1.0f, 0.0, 0.0), Vector3f(-1, 0, 0)));
+  scene_.addPrimitive(
+      std::make_unique<primitives::Sphere>(Vector3f(0.0f, 0.0, 0.0), 1.0));
+  scene_.addPrimitive(std::make_unique<primitives::Cube>(
+      Vector3f(0.0f, 0.0, 0.0), Vector3f(1.0, 1.0, 1.0)));
+  scene_.addPrimitive(std::make_unique<primitives::Cylinder>(
+      Vector3f(0.0f, 0.0, 0.0), 1.0, 1.0));
+
+  std::vector<primitives::Primitive::Type> type_list =
+      scene_.getPrimitiveTypeList();
+
+  EXPECT_EQ(type_list.size(), 4);
+  EXPECT_EQ(type_list[0], primitives::Primitive::Type::kPlane);
+  EXPECT_EQ(type_list[1], primitives::Primitive::Type::kSphere);
+  EXPECT_EQ(type_list[2], primitives::Primitive::Type::kCube);
+  EXPECT_EQ(type_list[3], primitives::Primitive::Type::kCylinder);
+}
+
 int main(int argc, char** argv) {
   google::InitGoogleLogging(argv[0]);
   FLAGS_alsologtostderr = true;

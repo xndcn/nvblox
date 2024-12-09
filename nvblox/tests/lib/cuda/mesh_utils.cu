@@ -42,9 +42,9 @@ void weldVerticesThrustAsync(const std::vector<Index3D>& block_indices,
 
     // Store a copy of the input vertices.
     device_vector<Vector3f> input_vertices;
-    input_vertices.copyFrom(mesh_block->vertices);
+    input_vertices.copyFromAsync(mesh_block->vertices, CudaStreamOwning());
     device_vector<Vector3f> input_normals;
-    input_normals.copyFrom(mesh_block->normals);
+    input_normals.copyFromAsync(mesh_block->normals, CudaStreamOwning());
 
     // sort vertices to bring duplicates together
     thrust::sort(thrust::device.on(cuda_stream), mesh_block->vertices.begin(),
@@ -58,8 +58,8 @@ void weldVerticesThrustAsync(const std::vector<Index3D>& block_indices,
 
     // Figure out the new size.
     size_t new_size = iterator - mesh_block->vertices.begin();
-    mesh_block->vertices.resize(new_size);
-    mesh_block->normals.resize(new_size);
+    mesh_block->vertices.resizeAsync(new_size, CudaStreamOwning());
+    mesh_block->normals.resizeAsync(new_size, CudaStreamOwning());
 
     // Find the indices of the original triangles.
     thrust::lower_bound(thrust::device.on(cuda_stream),
@@ -86,8 +86,8 @@ void weldSingleBlockThrustAsync(device_vector<Vector3f>* input_vertices,
                                 device_vector<Vector3f>* output_vertices,
                                 device_vector<int>* output_indices,
                                 const CudaStream& cuda_stream) {
-  output_vertices->copyFrom(*input_vertices);
-  output_indices->copyFrom(*input_indices);
+  output_vertices->copyFromAsync(*input_vertices, CudaStreamOwning());
+  output_indices->copyFromAsync(*input_indices, CudaStreamOwning());
 
   // sort vertices to bring duplicates together
   thrust::sort(thrust::device.on(cuda_stream), output_vertices->begin(),
@@ -101,7 +101,7 @@ void weldSingleBlockThrustAsync(device_vector<Vector3f>* input_vertices,
 
   // Figure out the new size.
   size_t new_size = iterator - output_vertices->begin();
-  output_vertices->resize(new_size);
+  output_vertices->resizeAsync(new_size, CudaStreamOwning());
 
   // Find the indices of the original triangles.
   thrust::lower_bound(thrust::device.on(cuda_stream), output_vertices->begin(),
@@ -251,7 +251,7 @@ void uniqueSingleBlockCubAsync(device_vector<Vector3f>* input_vertices,
 
   cuda_stream.synchronize();
   unified_ptr<int> num_out_host = num_out.clone(MemoryType::kHost);
-  output_vertices->resize(*num_out_host);
+  output_vertices->resizeAsync(*num_out_host, CudaStreamOwning());
 }
 
 template <int BLOCK_THREADS, int ITEMS_PER_THREAD>
@@ -361,7 +361,7 @@ void combinedSingleBlockCubAsync(device_vector<Vector3f>* input_vertices,
           num_out.get(), output_vertices->data(), output_indices->data());
 
   unified_ptr<int> num_out_host = num_out.clone(MemoryType::kHost);
-  output_vertices->resize(*num_out_host);
+  output_vertices->resizeAsync(*num_out_host, CudaStreamOwning());
 }
 
 }  // namespace nvblox

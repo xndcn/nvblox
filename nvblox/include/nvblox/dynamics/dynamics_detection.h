@@ -30,7 +30,7 @@ namespace nvblox {
 /// be dynamic.
 class DynamicsDetection {
  public:
-  DynamicsDetection();
+  DynamicsDetection() = delete;
   DynamicsDetection(std::shared_ptr<CudaStream> cuda_stream);
   virtual ~DynamicsDetection() = default;
 

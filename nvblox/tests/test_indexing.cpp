@@ -133,6 +133,76 @@ TEST_F(IndexingTest, BlockCenter) {
   EXPECT_NEAR(block_center.z(), 0.5f, kEps);
 }
 
+TEST_F(IndexingTest, ZIndexing) {
+  constexpr int kVoxelsPerSide = VoxelBlock<bool>::kVoxelsPerSide;
+  // From fixture:
+  // voxel_size_ = 0.05;
+  int block_idx_z, voxel_idx_z;
+
+  std::tie(block_idx_z, voxel_idx_z) =
+      getBlockAndVoxelIndexFrom1DPositionInLayer(block_size_, 0 * voxel_size_);
+  EXPECT_EQ(block_idx_z, 0);
+  EXPECT_EQ(voxel_idx_z, 0);
+
+  std::tie(block_idx_z, voxel_idx_z) =
+      getBlockAndVoxelIndexFrom1DPositionInLayer(block_size_, 1 * voxel_size_);
+  EXPECT_EQ(block_idx_z, 0);
+  EXPECT_EQ(voxel_idx_z, 1);
+
+  std::tie(block_idx_z, voxel_idx_z) =
+      getBlockAndVoxelIndexFrom1DPositionInLayer(
+          block_size_, kVoxelsPerSide * voxel_size_ - kFloatEpsilon);
+  EXPECT_EQ(block_idx_z, 0);
+  EXPECT_EQ(voxel_idx_z, 7);
+
+  std::tie(block_idx_z, voxel_idx_z) =
+      getBlockAndVoxelIndexFrom1DPositionInLayer(
+          block_size_, kVoxelsPerSide * voxel_size_ + kFloatEpsilon);
+  EXPECT_EQ(block_idx_z, 1);
+  EXPECT_EQ(voxel_idx_z, 0);
+
+  std::tie(block_idx_z, voxel_idx_z) =
+      getBlockAndVoxelIndexFrom1DPositionInLayer(block_size_,
+                                                 -1.0 * voxel_size_);
+  EXPECT_EQ(block_idx_z, -1);
+  EXPECT_EQ(voxel_idx_z, kVoxelsPerSide - 1);
+
+  std::tie(block_idx_z, voxel_idx_z) =
+      getBlockAndVoxelIndexFrom1DPositionInLayer(block_size_,
+                                                 -1.0 * voxel_size_);
+  EXPECT_EQ(block_idx_z, -1);
+  EXPECT_EQ(voxel_idx_z, kVoxelsPerSide - 1);
+
+  std::tie(block_idx_z, voxel_idx_z) =
+      getBlockAndVoxelIndexFrom1DPositionInLayer(block_size_,
+                                                 -kVoxelsPerSide * voxel_size_);
+  EXPECT_EQ(block_idx_z, -1);
+  EXPECT_EQ(voxel_idx_z, 0);
+
+  std::tie(block_idx_z, voxel_idx_z) =
+      getBlockAndVoxelIndexFrom1DPositionInLayer(
+          block_size_, -(kVoxelsPerSide + 1) * voxel_size_);
+  EXPECT_EQ(block_idx_z, -2);
+  EXPECT_EQ(voxel_idx_z, kVoxelsPerSide - 1);
+
+  // Check we get the same answers as the 3D Vector conversion
+  constexpr int kNumTests = 100000;
+  constexpr float kBoxSize = 100.0;
+  for (int i = 0; i < kNumTests; i++) {
+    const float z = test_utils::randomFloatInRange(-kBoxSize, kBoxSize);
+    std::tie(block_idx_z, voxel_idx_z) =
+        getBlockAndVoxelIndexFrom1DPositionInLayer(block_size_, z);
+    Vector3f vec = test_utils::getRandomVector3fInRange(-kBoxSize, kBoxSize);
+    vec.z() = z;
+    Index3D block_idx;
+    Index3D voxel_idx;
+    getBlockAndVoxelIndexFromPositionInLayer(block_size_, vec, &block_idx,
+                                             &voxel_idx);
+    EXPECT_EQ(block_idx_z, block_idx.z());
+    EXPECT_EQ(voxel_idx_z, voxel_idx.z());
+  }
+}
+
 int main(int argc, char** argv) {
   google::InitGoogleLogging(argv[0]);
   FLAGS_alsologtostderr = true;

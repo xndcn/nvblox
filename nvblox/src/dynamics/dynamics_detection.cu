@@ -79,9 +79,6 @@ __global__ void findDynamicPointsKernel(
       getOverlayColor(is_dynamic, depth);
 }
 
-DynamicsDetection::DynamicsDetection()
-    : cuda_stream_(std::make_shared<CudaStreamOwning>()) {}
-
 DynamicsDetection::DynamicsDetection(std::shared_ptr<CudaStream> cuda_stream)
     : cuda_stream_(cuda_stream) {}
 
@@ -103,7 +100,7 @@ void DynamicsDetection::computeDynamics(const DepthImage& depth_frame_C,
   findDynamicPointsKernel<<<num_blocks, kThreadsPerThreadBlock, 0,
                             *cuda_stream_>>>(
       depth_frame_C.dataConstPtr(),  // NOLINT
-      freespace_layer_L.getGpuLayerViewAsync(*cuda_stream_)
+      freespace_layer_L.getGpuLayerView(*cuda_stream_)
           .getHash()
           .impl_,                            // NOLINT
       freespace_layer_L.block_size(),        // NOLINT
@@ -157,21 +154,9 @@ void DynamicsDetection::prepareOutputs(const DepthImage& input_frame) {
   const int rows = input_frame.rows();
   const int cols = input_frame.cols();
 
-  // Mask
-  if ((dynamics_mask_.rows() != input_frame.rows()) ||
-      (dynamics_mask_.cols() != input_frame.cols()) ||
-      dynamics_mask_.memory_type() != input_frame.memory_type()) {
-    LOG(INFO) << "Allocating MonoImage for dynamics mask";
-    dynamics_mask_ = MonoImage(rows, cols, input_frame.memory_type());
-  }
-
-  // Overlay
-  if ((dynamics_overlay_.rows() != input_frame.rows()) ||
-      (dynamics_overlay_.cols() != input_frame.cols()) ||
-      dynamics_overlay_.memory_type() != input_frame.memory_type()) {
-    LOG(INFO) << "Allocating ColorImage for dynamics overlay";
-    dynamics_overlay_ = ColorImage(rows, cols, input_frame.memory_type());
-  }
+  // Images
+  dynamics_mask_.resizeAsync(rows, cols, *cuda_stream_);
+  dynamics_overlay_.resizeAsync(rows, cols, *cuda_stream_);
 
   // Point counters
   if (dynamic_points_counter_device_ == nullptr ||
@@ -179,11 +164,11 @@ void DynamicsDetection::prepareOutputs(const DepthImage& input_frame) {
     dynamic_points_counter_device_ = make_unified<int>(MemoryType::kDevice);
     dynamic_points_counter_host_ = make_unified<int>(MemoryType::kHost);
   }
-  dynamic_points_counter_device_.setZero();
+  dynamic_points_counter_device_.setZeroAsync(*cuda_stream_);
 
   // Points
   if (static_cast<size_t>(num_input_pixels) > dynamic_points_device_.size()) {
-    dynamic_points_device_.resize(num_input_pixels);
+    dynamic_points_device_.resizeAsync(num_input_pixels, *cuda_stream_);
   }
 }
 

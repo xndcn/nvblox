@@ -53,10 +53,10 @@ TEST(FuserTest, CommandLineFlags) {
       (char*)"--tsdf_decayed_weight_threshold=20.0",
       (char*)"--tsdf_set_free_distance_on_decayed=1",
       (char*)"--tsdf_decayed_free_distance_vox=21.0",
-      (char*)"--tsdf_deallocate_decayed_blocks=0",
+      (char*)"--decay_integrator_deallocate_decayed_blocks=0",
       (char*)"--free_region_decay_probability=0.522",
       (char*)"--occupied_region_decay_probability=0.23",
-      (char*)"--occupancy_deallocate_decayed_blocks=0",
+      (char*)"--occupancy_decay_to_free=1",
       NULL,
   };
   int argc = (sizeof(argv) / sizeof(*(argv))) - 1;
@@ -71,7 +71,7 @@ TEST(FuserTest, CommandLineFlags) {
 
   // Layer params
   EXPECT_NEAR(fuser->voxel_size_m_, 1.0f, kEps);
-  EXPECT_NEAR(fuser->static_mapper().tsdf_layer().voxel_size(), 1.0f, kEps);
+  EXPECT_NEAR(fuser->static_mapper()->tsdf_layer().voxel_size(), 1.0f, kEps);
 
   // Dataset
   EXPECT_EQ(fuser->num_frames_to_integrate_, 2);
@@ -89,91 +89,93 @@ TEST(FuserTest, CommandLineFlags) {
   EXPECT_EQ(fuser->esdf_frame_subsampling_, 10);
 
   // Projective integrator
-  EXPECT_NEAR(fuser->static_mapper().tsdf_integrator().max_weight(), 13.0f,
+  EXPECT_NEAR(fuser->static_mapper()->tsdf_integrator().max_weight(), 13.0f,
               kEps);
-  EXPECT_NEAR(fuser->static_mapper().lidar_tsdf_integrator().max_weight(),
+  EXPECT_NEAR(fuser->static_mapper()->lidar_tsdf_integrator().max_weight(),
               13.0f, kEps);
-  EXPECT_NEAR(fuser->static_mapper().color_integrator().max_weight(), 13.0f,
+  EXPECT_NEAR(fuser->static_mapper()->color_integrator().max_weight(), 13.0f,
               kEps);
   EXPECT_NEAR(
-      fuser->static_mapper().tsdf_integrator().max_integration_distance_m(),
+      fuser->static_mapper()->tsdf_integrator().max_integration_distance_m(),
       11.0f, kEps);
   EXPECT_NEAR(fuser->static_mapper()
-                  .occupancy_integrator()
+                  ->occupancy_integrator()
                   .max_integration_distance_m(),
               11.0f, kEps);
   EXPECT_NEAR(
-      fuser->static_mapper().color_integrator().max_integration_distance_m(),
+      fuser->static_mapper()->color_integrator().max_integration_distance_m(),
       11.0f, kEps);
   EXPECT_NEAR(
-      fuser->static_mapper().tsdf_integrator().truncation_distance_vox(), 12.0f,
-      kEps);
+      fuser->static_mapper()->tsdf_integrator().truncation_distance_vox(),
+      12.0f, kEps);
   EXPECT_NEAR(
-      fuser->static_mapper().occupancy_integrator().truncation_distance_vox(),
+      fuser->static_mapper()->occupancy_integrator().truncation_distance_vox(),
       12.0f, kEps);
   EXPECT_NEAR(fuser->static_mapper()
-                  .occupancy_integrator()
+                  ->occupancy_integrator()
                   .free_region_occupancy_probability(),
               0.2, kEps);
   EXPECT_NEAR(fuser->static_mapper()
-                  .occupancy_integrator()
+                  ->occupancy_integrator()
                   .occupied_region_occupancy_probability(),
               0.8, kEps);
   EXPECT_NEAR(fuser->static_mapper()
-                  .occupancy_integrator()
+                  ->occupancy_integrator()
                   .unobserved_region_occupancy_probability(),
               0.6, kEps);
   EXPECT_NEAR(fuser->static_mapper()
-                  .occupancy_integrator()
+                  ->occupancy_integrator()
                   .occupied_region_half_width_m(),
               1.0, kEps);
 
   // Mesh integrator
-  EXPECT_NEAR(fuser->static_mapper().mesh_integrator().min_weight(), 14.0f,
+  EXPECT_NEAR(fuser->static_mapper()->mesh_integrator().min_weight(), 14.0f,
               kEps);
-  EXPECT_EQ(fuser->static_mapper().mesh_integrator().weld_vertices(), false);
+  EXPECT_EQ(fuser->static_mapper()->mesh_integrator().weld_vertices(), false);
 
   // ESDF integrator
-  EXPECT_NEAR(fuser->static_mapper().esdf_integrator().min_weight(), 16.0f,
+  EXPECT_NEAR(fuser->static_mapper()->esdf_integrator().min_weight(), 16.0f,
               kEps);
-  EXPECT_NEAR(fuser->static_mapper().esdf_integrator().max_site_distance_vox(),
+  EXPECT_NEAR(fuser->static_mapper()->esdf_integrator().max_site_distance_vox(),
               17.0f, kEps);
-  EXPECT_NEAR(fuser->static_mapper().esdf_integrator().max_esdf_distance_m(),
+  EXPECT_NEAR(fuser->static_mapper()->esdf_integrator().max_esdf_distance_m(),
               18.0f, kEps);
 
   // Weighting scheme
-  EXPECT_EQ(fuser->static_mapper().tsdf_integrator().weighting_function_type(),
+  EXPECT_EQ(fuser->static_mapper()->tsdf_integrator().weighting_function_type(),
             WeightingFunctionType::kConstantDropoffWeight);
-  EXPECT_EQ(fuser->static_mapper().color_integrator().weighting_function_type(),
-            WeightingFunctionType::kConstantDropoffWeight);
+  EXPECT_EQ(
+      fuser->static_mapper()->color_integrator().weighting_function_type(),
+      WeightingFunctionType::kConstantDropoffWeight);
 
   // TSDF decay integrator
-  EXPECT_NEAR(fuser->static_mapper().tsdf_decay_integrator().decay_factor(),
+  EXPECT_NEAR(fuser->static_mapper()->tsdf_decay_integrator().decay_factor(),
               0.19f, kEps);
-  EXPECT_NEAR(
-      fuser->static_mapper().tsdf_decay_integrator().decayed_weight_threshold(),
-      20.0, kEps);
+  EXPECT_NEAR(fuser->static_mapper()
+                  ->tsdf_decay_integrator()
+                  .decayed_weight_threshold(),
+              20.0, kEps);
   EXPECT_TRUE(fuser->static_mapper()
-                  .tsdf_decay_integrator()
+                  ->tsdf_decay_integrator()
                   .set_free_distance_on_decayed());
   EXPECT_NEAR(
-      fuser->static_mapper().tsdf_decay_integrator().free_distance_vox(), 21.0,
+      fuser->static_mapper()->tsdf_decay_integrator().free_distance_vox(), 21.0,
       kEps);
   EXPECT_FALSE(fuser->static_mapper()
-                   .tsdf_decay_integrator()
+                   ->tsdf_decay_integrator()
                    .deallocate_decayed_blocks());
 
   // Occupancy Decay integrator
   EXPECT_NEAR(fuser->static_mapper()
-                  .occupancy_decay_integrator()
+                  ->occupancy_decay_integrator()
                   .free_region_decay_probability(),
               0.522, kEps);
   EXPECT_NEAR(fuser->static_mapper()
-                  .occupancy_decay_integrator()
+                  ->occupancy_decay_integrator()
                   .occupied_region_decay_probability(),
               0.23, kEps);
   EXPECT_FALSE(fuser->static_mapper()
-                   .occupancy_decay_integrator()
+                   ->occupancy_decay_integrator()
                    .deallocate_decayed_blocks());
 }
 

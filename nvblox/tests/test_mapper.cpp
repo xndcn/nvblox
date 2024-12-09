@@ -44,7 +44,7 @@ primitives::Scene getSphereInABoxScene(const Vector3f& sphere_center,
 
 bool allMeshPointsOnSphere(const MeshLayer& mesh_layer, const Vector3f& center,
                            const float sphere_radius) {
-  Mesh mesh = Mesh::fromLayer(mesh_layer);
+  Mesh mesh = Mesh::fromLayer(mesh_layer, CudaStreamOwning());
   for (const Vector3f& p : mesh.vertices) {
     constexpr float kVertexEps = 0.01;
     if (std::abs((p - center).norm() - sphere_radius) > kVertexEps) {
@@ -234,7 +234,7 @@ TEST(MapperTest, GenerateEsdfInFakeObservedAreas) {
   }
 }
 
-class MapperUpdateMeshTest : public ::testing::Test {
+class MapperLayerStreamerTest : public ::testing::Test {
  protected:
   void SetUp() override {
     // Make a scene 6x6x3 meters big.
@@ -254,33 +254,52 @@ class MapperUpdateMeshTest : public ::testing::Test {
     scene.generateLayerFromScene(1.0, &tsdf_layer_host);
 
     mapper_.tsdf_layer().copyFrom(tsdf_layer_host);
-
     mapper_.integrateDepth(depth_frame, T_S_C, camera);
+    mapper_.updateMesh();
     EXPECT_GT(mapper_.tsdf_layer().numAllocatedBlocks(), 0);
   }
   static constexpr float kVoxelSizeM = 0.1F;
   Mapper mapper_{kVoxelSizeM, MemoryType::kHost};
 };
 
-TEST_F(MapperUpdateMeshTest, updateMeshZeroMbps) {
-  mapper_.mesh_bandwidth_limit_mbps(0);
-  std::shared_ptr<const SerializedMesh> serialized_mesh = mapper_.updateMesh();
-  ASSERT_EQ(serialized_mesh->vertices.size(), 0);
+TEST_F(MapperLayerStreamerTest, ZeroMbps) {
+  mapper_.serializeSelectedLayers(LayerType::kMesh, 0);
+  ASSERT_EQ(mapper_.serializedMeshLayer()->block_indices.size(), 0);
 }
 
-TEST_F(MapperUpdateMeshTest, updateMeshUnLimited) {
-  mapper_.mesh_bandwidth_limit_mbps(-1.);
-  std::shared_ptr<const SerializedMesh> serialized_mesh = mapper_.updateMesh();
-  ASSERT_GT(serialized_mesh->vertices.size(), 0);
+TEST_F(MapperLayerStreamerTest, UnLimited) {
+  mapper_.serializeSelectedLayers(LayerType::kMesh,
+                                  kLayerStreamerUnlimitedBandwidth);
+  ASSERT_GT(mapper_.serializedMeshLayer()->block_indices.size(), 0);
 }
 
-TEST_F(MapperUpdateMeshTest, updateMeshLimited) {
-  mapper_.mesh_bandwidth_limit_mbps(10);
-  mapper_.updateMesh();
-  std::shared_ptr<const SerializedMesh> serialized_mesh = mapper_.updateMesh();
+TEST_F(MapperLayerStreamerTest, Limited) {
+  constexpr float kBandwidthLimit = 10.0F;
+  mapper_.serializeSelectedLayers(LayerType::kMesh, kBandwidthLimit);
   // Since the mesh size is based on bandwidth estimation it's difficult to
   // predict how large it will be. Therefore we check for a nozero size here.
-  ASSERT_GT(serialized_mesh->vertices.size(), 0);
+  ASSERT_GT(mapper_.serializedMeshLayer()->block_indices.size(), 0);
+}
+
+TEST_F(MapperLayerStreamerTest, MultipleLayers) {
+  mapper_.serializeSelectedLayers(
+      LayerTypeBitMask(LayerType::kMesh) | LayerType::kTsdf,
+      kLayerStreamerUnlimitedBandwidth);
+  ASSERT_GT(mapper_.serializedMeshLayer()->block_indices.size(), 0);
+  ASSERT_GT(mapper_.serializedTsdfLayer()->block_indices.size(), 0);
+
+  ASSERT_EQ(mapper_.serializedColorLayer()->block_indices.size(), 0);
+  ASSERT_EQ(mapper_.serializedEsdfLayer()->block_indices.size(), 0);
+}
+
+TEST_F(MapperLayerStreamerTest, ColorAndTsdfHasSameNumberOfBlocks) {
+  mapper_.serializeSelectedLayers(
+      LayerTypeBitMask(LayerTypeBitMask(LayerType::kColor) | LayerType::kTsdf),
+      kLayerStreamerUnlimitedBandwidth);
+
+  ASSERT_GT(mapper_.serializedColorLayer()->block_indices.size(), 0);
+  ASSERT_EQ(mapper_.serializedColorLayer()->block_indices.size(),
+            mapper_.serializedTsdfLayer()->block_indices.size());
 }
 
 int main(int argc, char** argv) {

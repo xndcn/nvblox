@@ -54,23 +54,9 @@ void allocateBlocksWhereRequired(const std::vector<Index3D>& block_indices,
   cuda_stream.synchronize();
 }
 
-template <class... Args>
-void expandBuffersIfRequired(size_t required_min_size, CudaStream cuda_stream,
-                             Args... args) {
-  static_assert((std::is_pointer<Args>::value && ...));
-  const bool at_least_one_vector_smaller =
-      (... || (args->capacity() < required_min_size));
-  if (at_least_one_vector_smaller) {
-    constexpr float kBufferExpansionFactor = 1.5f;
-    const int new_size =
-        static_cast<int>(kBufferExpansionFactor * required_min_size);
-    (args->reserveAsync(new_size, cuda_stream), ...);
-  }
-}
-
 template <typename BlockType>
 void transferBlockPointersToDevice(
-    const std::vector<Index3D>& block_indices, CudaStream cuda_stream,
+    const std::vector<Index3D>& block_indices, const CudaStream& cuda_stream,
     BlockLayer<BlockType>* layer_ptr, host_vector<BlockType*>* block_ptrs_host,
     device_vector<BlockType*>* block_ptrs_device) {
   if (block_indices.empty()) {
@@ -90,7 +76,7 @@ void transferBlockPointersToDevice(
 }
 
 inline void transferBlocksIndicesToDevice(
-    const std::vector<Index3D>& block_indices, CudaStream cuda_stream,
+    const std::vector<Index3D>& block_indices, const CudaStream& cuda_stream,
     host_vector<Index3D>* block_indices_host,
     device_vector<Index3D>* block_indices_device) {
   if (block_indices.empty()) {

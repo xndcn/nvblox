@@ -78,41 +78,6 @@ std::vector<Index3D> getBlockIndicesToDecay(
   }
 }
 
-/// Returns true if a voxel is in view of the camera, is not occluded, is not
-/// out of max range, and has a valid depth measurment.
-__device__ bool doesVoxelHaveDepthMeasurement(
-    const Index3D* block_indices_device_ptr, const Camera camera,
-    const float* image, int rows, int cols, const Transform T_C_L,
-    const float block_size, const float max_integration_distance,
-    const float truncation_distance_m) {
-  // Project the voxel into the depth image
-  Eigen::Vector2f u_px;
-  float voxel_depth_m;
-  Vector3f p_voxel_center_C;
-  if (!projectThreadVoxel(block_indices_device_ptr, camera, T_C_L, block_size,
-                          max_integration_distance, &u_px, &voxel_depth_m,
-                          &p_voxel_center_C)) {
-    return false;
-  }
-  // Interpolate on the image plane
-  // Note that the value of the depth image is the depth to the surface.
-  float surface_depth_measured;
-  if (!interpolation::interpolate2DClosest<
-          float, interpolation::checkers::FloatPixelGreaterThanZero>(
-          image, u_px, rows, cols, &surface_depth_measured)) {
-    return false;
-  }
-  // Check the distance from the surface
-  const float voxel_to_surface_distance =
-      surface_depth_measured - voxel_depth_m;
-  // Check that we're not occuluded (we're occluded if we're more than the
-  // truncation distance behind a surface).
-  if (voxel_to_surface_distance < -truncation_distance_m) {
-    return false;
-  }
-  return true;
-}
-
 }  // namespace
 
 template <typename BlockType, typename DecayFunctorType>
@@ -174,9 +139,11 @@ __global__ void decayTsdfExcludeImageKernel(
     const float truncation_distance_m,     // NOLINT
     bool* is_block_fully_decayed) {
   // We do the decay step, only if the voxel is not in view.
+  Index3D block_idx, voxel_idx;
+  voxelAndBlockIndexFromCudaThreadIndex(block_indices, &block_idx, &voxel_idx);
   const bool do_decay = (!doesVoxelHaveDepthMeasurement(
-      block_indices, camera, depth_image, rows, cols, T_C_L, block_size_m,
-      max_distance_m, truncation_distance_m));
+      block_idx, voxel_idx, camera, depth_image, rows, cols, T_C_L,
+      block_size_m, max_distance_m, truncation_distance_m));
   decay(block_ptrs, voxel_decayer, do_decay, is_block_fully_decayed);
 }
 
@@ -187,8 +154,8 @@ std::vector<Index3D> VoxelDecayer<LayerType>::decay(
     const DecayFunctorType& voxel_decay_functor,  // NOLINT
     const bool deallocate_decayed_blocks,         // NOLINT
     const std::optional<DecayBlockExclusionOptions>& block_exclusion_options,
-    const std::optional<DecayViewExclusionOptions>& view_exclusion_options,
-    const CudaStream cuda_stream) {
+    const std::optional<ViewBasedInclusionData>& view_exclusion_options,
+    const CudaStream& cuda_stream) {
   CHECK_NOTNULL(layer_ptr);
 
   // Get block indices to decay and their block pointers
@@ -244,20 +211,22 @@ std::vector<Index3D> VoxelDecayer<LayerType>::decay(
         (view_exclusion_options->truncation_distance_m)
             ? view_exclusion_options->truncation_distance_m.value()
             : std::numeric_limits<float>::max();
+    CHECK(view_exclusion_options->depth_image.has_value())
+        << "At the moment we only support view exclusion *with* a DepthImage.";
     decayTsdfExcludeImageKernel<<<num_thread_blocks, kThreadsPerBlock, 0,
                                   cuda_stream>>>(
-        allocated_block_ptrs_device_.data(),                  // NOLINT
-        voxel_decay_functor,                                  // NOLINT
-        allocated_block_indices_device_.data(),               // NOLINT
-        view_exclusion_options->camera,                       // NOLINT
-        view_exclusion_options->depth_image->dataConstPtr(),  // NOLINT
-        view_exclusion_options->depth_image->rows(),          // NOLINT
-        view_exclusion_options->depth_image->cols(),          // NOLINT
-        view_exclusion_options->T_L_C.inverse(),              // NOLINT
-        layer_ptr->block_size(),                              // NOLINT
-        kernel_max_view_distance_m,                           // NOLINT
-        kernel_truncation_distance_m,                         // NOLINT
-        block_fully_decayed_device_.data()                    // NOLINT
+        allocated_block_ptrs_device_.data(),                          // NOLINT
+        voxel_decay_functor,                                          // NOLINT
+        allocated_block_indices_device_.data(),                       // NOLINT
+        view_exclusion_options->camera,                               // NOLINT
+        view_exclusion_options->depth_image.value()->dataConstPtr(),  // NOLINT
+        view_exclusion_options->depth_image.value()->rows(),          // NOLINT
+        view_exclusion_options->depth_image.value()->cols(),          // NOLINT
+        view_exclusion_options->T_L_C.inverse(),                      // NOLINT
+        layer_ptr->block_size(),                                      // NOLINT
+        kernel_max_view_distance_m,                                   // NOLINT
+        kernel_truncation_distance_m,                                 // NOLINT
+        block_fully_decayed_device_.data()                            // NOLINT
     );
   } else {
     decayKernel<<<num_thread_blocks, kThreadsPerBlock, 0, cuda_stream>>>(
@@ -284,7 +253,8 @@ std::vector<Index3D> VoxelDecayer<LayerType>::decay(
   }
 
   if (deallocate_decayed_blocks) {
-    return deallocateFullyDecayedBlocks(layer_ptr, block_indices_to_decay);
+    return deallocateFullyDecayedBlocks(layer_ptr, block_indices_to_decay,
+                                        cuda_stream);
   } else {
     return std::vector<Index3D>();
   }
@@ -292,14 +262,15 @@ std::vector<Index3D> VoxelDecayer<LayerType>::decay(
 
 template <class LayerType>
 std::vector<Index3D> VoxelDecayer<LayerType>::deallocateFullyDecayedBlocks(
-    LayerType* layer_ptr, const std::vector<Index3D>& decayed_block_indices) {
+    LayerType* layer_ptr, const std::vector<Index3D>& decayed_block_indices,
+    const CudaStream& cuda_stream) {
   CHECK(decayed_block_indices.size() == block_fully_decayed_host_.size());
 
   std::vector<Index3D> deallocated_blocks;
   deallocated_blocks.reserve(decayed_block_indices.size());
   for (size_t i = 0; i < decayed_block_indices.size(); ++i) {
     if (block_fully_decayed_host_[i]) {
-      layer_ptr->clearBlock(decayed_block_indices[i]);
+      layer_ptr->clearBlockAsync(decayed_block_indices[i], cuda_stream);
       deallocated_blocks.push_back(decayed_block_indices[i]);
     }
   }

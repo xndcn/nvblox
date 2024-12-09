@@ -22,6 +22,18 @@ limitations under the License.
 namespace nvblox {
 namespace io {
 
+/// Returns a path: /{output_dir}/{prefix}{idx}.{ext}
+/// @param dir The output directory.
+/// @param prefix The part of the filename before the index.
+/// @param idx The index.
+/// @param num_digits The number of digits in the idx string, preceeded by 0s.
+/// @param ext The file extension.
+/// @return The file path.
+inline std::string getIndexedPath(const std::string& dir,
+                                  const std::string& prefix, const int idx,
+                                  const int num_digits = 4,
+                                  const std::string& ext = ".txt");
+
 template <typename Derived>
 void writeToCsv(const std::string& filepath,
                 const Eigen::DenseBase<Derived>& eig);

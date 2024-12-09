@@ -1,5 +1,5 @@
 /*
-Copyright 2022-2023 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,14 +20,47 @@ limitations under the License.
 
 namespace nvblox {
 
-void check_cuda(cudaError_t result, char const* const func,
-                const char* const file, int const line);
+/// Allow for NVBLOX_CHECK(expression) in both host and device code.
+/// Halts execution if expression evaluates to false. Unlike assert, these
+/// checks will remain active for RELEASE builds and should therefore be used
+/// sparingly to avoid overhead.
+#ifdef __CUDA_ARCH__
+#define NVBLOX_CHECK(expression, message_string)                 \
+  {                                                              \
+    if (!(expression)) {                                         \
+      printf(                                                    \
+          "%s:%i (function: %s)  ERROR: CUDA check failed with " \
+          "message\n%s\n\n",                                     \
+          __FILE__, __LINE__, __FUNCTION__, message_string);     \
+      __trap();                                                  \
+    }                                                            \
+  }
+#else
+#define NVBLOX_CHECK(expression, message_string) \
+  CHECK(expression) << message_string;
+#endif
 
-#define checkCudaErrors(val) nvblox::check_cuda((val), #val, __FILE__, __LINE__)
+// Debug-only macros that will be disabled for release builds.
+#ifdef NDEBUG
+#define NVBLOX_DCHECK(expression, message_string)
+#else
+#define NVBLOX_DCHECK(expression, message_string) \
+  NVBLOX_CHECK(expression, message_string)
+#endif
 
-void check_npp(NppStatus status, char const* const func, const char* const file,
-               int const line);
+/// Aborts execution with a message
+#define NVBLOX_ABORT(message_string) NVBLOX_CHECK(false, message_string);
 
-#define checkNppErrors(val) nvblox::check_npp((val), #val, __FILE__, __LINE__)
+void check_cuda_error_value(cudaError_t result, char const* const func,
+                            const char* const file, int const line);
+
+#define checkCudaErrors(val) \
+  nvblox::check_cuda_error_value((val), #val, __FILE__, __LINE__)
+
+void check_npp_error_value(NppStatus status, char const* const func,
+                           const char* const file, int const line);
+
+#define checkNppErrors(val) \
+  nvblox::check_npp_error_value((val), #val, __FILE__, __LINE__)
 
 }  // namespace nvblox

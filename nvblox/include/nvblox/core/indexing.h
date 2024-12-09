@@ -19,33 +19,49 @@ limitations under the License.
 
 namespace nvblox {
 
-__host__ __device__ inline float voxelSizeToBlockSize(const float voxel_size);
-__host__ __device__ inline float blockSizeToVoxelSize(const float block_size);
+__host__ __device__ inline constexpr float voxelSizeToBlockSize(
+    const float voxel_size_m);
+__host__ __device__ inline constexpr float blockSizeToVoxelSize(
+    const float block_size_m);
 
 __host__ __device__ inline Index3D getBlockIndexFromPositionInLayer(
-    const float block_size, const Vector3f& position);
+    const float block_size_m, const Vector3f& position);
 
 __host__ __device__ inline void getBlockAndVoxelIndexFromPositionInLayer(
-    const float block_size, const Vector3f& position, Index3D* block_idx,
+    const float block_size_m, const Vector3f& position, Index3D* block_idx,
     Index3D* voxel_idx);
 
 /// Gets the position of the minimum corner (i.e., the smallest towards negative
 /// infinity of each axis).
 __host__ __device__ inline Vector3f getPositionFromBlockIndexAndVoxelIndex(
-    const float block_size, const Index3D& block_index,
+    const float block_size_m, const Index3D& block_index,
     const Index3D& voxel_index);
 
 __host__ __device__ inline Vector3f getPositionFromBlockIndex(
-    const float block_size, const Index3D& block_index);
+    const float block_size_m, const Index3D& block_index);
 
 /// Gets the CENTER of the voxel.
 __host__ __device__ inline Vector3f
-getCenterPositionFromBlockIndexAndVoxelIndex(const float block_size,
+getCenterPositionFromBlockIndexAndVoxelIndex(const float block_size_m,
                                              const Index3D& block_index,
                                              const Index3D& voxel_index);
 
 __host__ __device__ inline Vector3f getCenterPositionFromBlockIndex(
-    const float block_size, const Index3D& block_index);
+    const float block_size_m, const Index3D& block_index);
+
+// 2D Indexing
+__host__ __device__ inline Vector2f get2DPositionFromBlockIndexAndVoxelIndex(
+    const float block_size_m, const Index2D& block_index,
+    const Index2D& voxel_index);
+
+__host__ __device__ inline Vector2f
+getCenter2DPositionFromBlockIndexAndVoxelIndex(const float block_size_m,
+                                               const Index2D& block_2d_index,
+                                               const Index2D& voxel_2d_index);
+
+// 1D indexing
+__host__ __device__ inline std::pair<int, int>
+getBlockAndVoxelIndexFrom1DPositionInLayer(const float block_size_m, float p);
 
 }  // namespace nvblox
 

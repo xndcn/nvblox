@@ -43,7 +43,7 @@ inline Vector3f interpolateVertex(const Vector3f& vertex1,
 inline void interpolateEdgeVertices(
     const PerVoxelMarchingCubesResults& marching_cubes_results,
     Eigen::Matrix<float, 3, 12>* edge_coords) {
-  CHECK(edge_coords != NULL);
+  NVBLOX_CHECK(edge_coords != NULL, "");
   for (size_t i = 0; i < 12; ++i) {
     const uint8_t* pairs = kEdgeIndexPairs[i];
     const int edge0 = pairs[0];

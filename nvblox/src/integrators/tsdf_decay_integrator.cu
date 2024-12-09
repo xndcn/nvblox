@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,16 +18,6 @@ limitations under the License.
 #include <nvblox/integrators/internal/cuda/impl/decayer_impl.cuh>
 
 namespace nvblox {
-
-TsdfDecayIntegrator::TsdfDecayIntegrator(DecayMode decay_mode) {
-  if (decay_mode == DecayMode::kDecayToDeallocate) {
-    set_free_distance_on_decayed(false);
-  } else if (decay_mode == DecayMode::kDecayToFree) {
-    set_free_distance_on_decayed(true);
-  } else {
-    LOG(FATAL) << "Decay mode not implemented";
-  }
-}
 
 float TsdfDecayIntegrator::decay_factor() const { return decay_factor_; }
 
@@ -108,7 +98,7 @@ struct TsdfDecayFunctor {
 
     // Check for fully decayed, if not return
     // If voxel *is* fully decayed, update distance to free (if requested)
-    if (isFullyDecayed(voxel_ptr)) {
+    if (set_free_distance_on_decayed_ && isFullyDecayed(voxel_ptr)) {
       voxel_ptr->distance = free_distance_m_;
     }
   }
@@ -122,39 +112,33 @@ struct TsdfDecayFunctor {
 };
 
 std::vector<Index3D> TsdfDecayIntegrator::decay(TsdfLayer* layer_ptr,
-                                                const CudaStream cuda_stream) {
+                                                const CudaStream& cuda_stream) {
   return decay(layer_ptr, {}, {}, cuda_stream);
 }
 
 std::vector<Index3D> TsdfDecayIntegrator::decay(
     TsdfLayer* layer_ptr,
     const DecayBlockExclusionOptions& block_exclusion_options,
-    const CudaStream cuda_stream) {
+    const CudaStream& cuda_stream) {
   return decay(layer_ptr, block_exclusion_options, {}, cuda_stream);
 }
 
 std::vector<Index3D> TsdfDecayIntegrator::decay(
-    TsdfLayer* layer_ptr,
-    const DecayViewExclusionOptions& view_exclusion_options,
-    const CudaStream cuda_stream) {
+    TsdfLayer* layer_ptr, const ViewBasedInclusionData& view_exclusion_options,
+    const CudaStream& cuda_stream) {
   return decay(layer_ptr, {}, view_exclusion_options, cuda_stream);
 }
 
 std::vector<Index3D> TsdfDecayIntegrator::decay(
     TsdfLayer* layer_ptr,
     const std::optional<DecayBlockExclusionOptions>& block_exclusion_options,
-    const std::optional<DecayViewExclusionOptions>& view_exclusion_options,
-    const CudaStream cuda_stream) {
+    const std::optional<ViewBasedInclusionData>& view_exclusion_options,
+    const CudaStream& cuda_stream) {
   // Build the functor which decays a single voxel.
   const float free_distance_m = free_distance_vox_ * layer_ptr->voxel_size();
   TsdfDecayFunctor voxel_decayer(decay_factor_, decayed_weight_threshold_,
                                  set_free_distance_on_decayed_,
                                  free_distance_m);
-
-  // Run it on all voxels
-  return decayer_.decay(layer_ptr, voxel_decayer, deallocate_decayed_blocks_,
-                        block_exclusion_options, view_exclusion_options,
-                        cuda_stream);
 
   // Sanity check the parameters
   if (set_free_distance_on_decayed_ && deallocate_decayed_blocks_) {
@@ -162,6 +146,11 @@ std::vector<Index3D> TsdfDecayIntegrator::decay(
                     "\"deallocate_decayed_blocks\" are set true. These flags "
                     "have conflicting effects";
   }
+
+  // Run it on all voxels
+  return decayer_.decay(layer_ptr, voxel_decayer, deallocate_decayed_blocks_,
+                        block_exclusion_options, view_exclusion_options,
+                        cuda_stream);
 }
 
 parameters::ParameterTreeNode TsdfDecayIntegrator::getParameterTree(

@@ -46,7 +46,19 @@ void expect_cuda_freed(T* ptr) {
   checkCudaErrors(cudaPointerGetAttributes(&attributes, ptr));
   EXPECT_EQ(attributes.type, cudaMemoryType::cudaMemoryTypeUnregistered);
   EXPECT_EQ(attributes.devicePointer, nullptr);
-  EXPECT_EQ(attributes.hostPointer, nullptr);
+  // NOTE(alexmillane, 21.10.2024): We experienced that this conditions no
+  // longer remains true on NVIDIA driver 560 (and potentially higher, not
+  // sure). In other words, it's no longer guarunteed that
+  // `attributes.hostPointer == nullptr` after CUDA memory is freed.
+  // EXPECT_EQ(attributes.hostPointer, nullptr);
+}
+
+template <typename T>
+void expect_cuda_allocated(T* ptr) {
+  cudaPointerAttributes attributes;
+  checkCudaErrors(cudaPointerGetAttributes(&attributes, ptr));
+  EXPECT_NE(attributes.type, cudaMemoryType::cudaMemoryTypeUnregistered);
+  EXPECT_NE(attributes.devicePointer, nullptr);
 }
 
 TEST(UnifiedPointerTest, IntTest) {
@@ -86,23 +98,11 @@ TEST(UnifiedPointerTest, MemoryTest) {
     // Put this in a disappearing scope.
     unified_ptr<int> dummy_ptr(make_unified<int>(100));
     raw_ptr = dummy_ptr.get();
-
     // Check that the memory is allocated.
-    cudaPointerAttributes attributes;
-    cudaError_t error = cudaPointerGetAttributes(&attributes, raw_ptr);
-    EXPECT_EQ(error, cudaSuccess);
-    EXPECT_EQ(attributes.type, cudaMemoryType::cudaMemoryTypeManaged);
+    expect_cuda_allocated(raw_ptr);
   }
-
   // Make sure the memory no longer exists now it's out of scope.
-  cudaPointerAttributes attributes;
-  checkCudaErrors(cudaPointerGetAttributes(&attributes, raw_ptr));
-  // Note(alexmillane): Whether or not this call returns an error seems to vary
-  // between machines... Hopefully the checks below indicate that the memory has
-  // been freed. EXPECT_EQ(error, cudaErrorInvalidValue);
-  EXPECT_EQ(attributes.type, cudaMemoryType::cudaMemoryTypeUnregistered);
-  EXPECT_EQ(attributes.devicePointer, nullptr);
-  EXPECT_EQ(attributes.hostPointer, nullptr);
+  expect_cuda_freed(raw_ptr);
 }
 
 TEST(UnifiedPointerTest, ArrayTest) {
@@ -129,6 +129,7 @@ TEST(UnifiedPointerTest, ArrayTest) {
   }
 
   int* raw_ptr = goodbye.get();
+  expect_cuda_allocated(raw_ptr);
   goodbye.reset();
   EXPECT_FALSE(goodbye);
   EXPECT_EQ(goodbye.get(), nullptr);
@@ -146,6 +147,7 @@ TEST(UnifiedPointerTest, HostTest) {
   EXPECT_EQ(attributes.type, cudaMemoryType::cudaMemoryTypeHost);
 
   int* raw_ptr = int_host_ptr.get();
+  expect_cuda_allocated(raw_ptr);
   int_host_ptr.reset();
   EXPECT_FALSE(int_host_ptr);
   EXPECT_EQ(int_host_ptr.get(), nullptr);

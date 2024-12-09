@@ -64,8 +64,16 @@ namespace checkers {
 
 template <typename ElementType>
 struct PixelAlwaysValid {
-  __host__ __device__ static inline bool check(const ElementType&) {
+  __host__ __device__ constexpr static inline bool check(const ElementType&) {
     return true;
+  }
+};
+
+template <typename ElementType>
+struct PixelNotNan {
+  __host__ __device__ constexpr static inline bool check(
+      const ElementType& pixel_value) {
+    return !isnan(pixel_value);
   }
 };
 
@@ -129,22 +137,20 @@ bool interpolate2DClosest(const ElementType* frame, const Vector2f& u_px,
                           ElementType* value_interpolated_ptr,
                           Index2D* u_px_closest_ptr) {
   // Closest pixel
-  const Index2D u_M_rounded = u_px.array().round().cast<int>();
+  const Index2D u_M = u_px.array().floor().cast<int>();
   // Check bounds:
-  if (u_M_rounded.x() < 0 || u_M_rounded.y() < 0 || u_M_rounded.x() >= cols ||
-      u_M_rounded.y() >= rows) {
+  if (u_M.x() < 0 || u_M.y() < 0 || u_M.x() >= cols || u_M.y() >= rows) {
     return false;
   }
   // "Interpolate"
-  const ElementType pixel_value =
-      image::access(u_M_rounded.y(), u_M_rounded.x(), cols, frame);
+  const ElementType pixel_value = image::access(u_M.y(), u_M.x(), cols, frame);
   // Check result for validity
   if (!PixelValidityChecker::check(pixel_value)) {
     return false;
   }
   *value_interpolated_ptr = pixel_value;
   if (u_px_closest_ptr) {
-    *u_px_closest_ptr = u_M_rounded;
+    *u_px_closest_ptr = u_M;
   }
   return true;
 }
@@ -202,7 +208,9 @@ __device__ bool interpolateLidarImage(
     const Vector2f& u_px, const int rows, const int cols,
     const float linear_interpolation_max_allowable_difference_m,
     const float nearest_interpolation_max_allowable_squared_dist_to_ray_m,
-    float* image_value) {
+    float* image_value, Index2D* u_px_closest_ptr) {
+  NVBLOX_CHECK(u_px_closest_ptr != nullptr,
+               "passing nullptr to interpolateLidarImage");
   // Try linear interpolation first
   interpolation::Interpolation2DNeighbours<float> neighbours;
   bool linear_interpolation_success = interpolation::interpolate2DLinear<
@@ -227,10 +235,9 @@ __device__ bool interpolateLidarImage(
 
   // If linear didn't work - try nearest neighbour interpolation
   if (!linear_interpolation_success) {
-    Index2D u_neighbour_px;
     if (!interpolation::interpolate2DClosest<
             float, interpolation::checkers::FloatPixelGreaterThanZero>(
-            image, u_px, rows, cols, image_value, &u_neighbour_px)) {
+            image, u_px, rows, cols, image_value, u_px_closest_ptr)) {
       // If we can't successfully do closest, fail to intgrate this voxel.
       return false;
     }
@@ -238,7 +245,8 @@ __device__ bool interpolateLidarImage(
     // Check that this voxel is close to the ray passing through the pixel.
     // Note(alexmillane): This is to prevent large numbers of voxels
     // being integrated by a single pixel at long ranges.
-    const Vector3f closest_ray = lidar.vectorFromPixelIndices(u_neighbour_px);
+    const Vector3f closest_ray =
+        lidar.vectorFromPixelIndices(*u_px_closest_ptr);
     const float off_ray_squared_distance =
         (p_voxel_center_C - p_voxel_center_C.dot(closest_ray) * closest_ray)
             .squaredNorm();

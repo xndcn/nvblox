@@ -74,7 +74,12 @@ class LayerSerializerGpu {
   std::shared_ptr<const SerializedLayerType> serialize(
       const LayerType& layer,
       const std::vector<Index3D>& block_indices_to_serialize,
-      const CudaStream cuda_stream);
+      const CudaStream& cuda_stream);
+
+  /// Get the serialized layer produced by the last call to serialize()
+  std::shared_ptr<const SerializedLayerType> getSerializedLayer() {
+    return serialized_layer_;
+  }
 
  private:
   LayerSerializerGpuInternal<LayerType, VoxelType> serializer_;

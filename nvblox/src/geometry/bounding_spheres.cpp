@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,15 +20,25 @@ limitations under the License.
 namespace nvblox {
 namespace internal {
 
+bool isBlockWithRadius(const Index3D& block_index, float block_size,
+                       const Vector3f& center, float radius,
+                       std::function<bool(float, float)> comparison) {
+  // Check whether the distance from the center to the block is smaller
+  // than the radius.
+  AxisAlignedBoundingBox block_box = getAABBOfBlock(block_size, block_index);
+  const float center_to_block_dist = block_box.exteriorDistance(center);
+  return comparison(center_to_block_dist, radius);
+}
+
 std::vector<Index3D> getBlocksWithRadius(
     const std::vector<Index3D>& input_blocks, float block_size,
     const Vector3f& center, float radius,
     std::function<bool(float, float)> comparison) {
-  // Go through all the blocks, get their distances to the center.
+  // Go through all the blocks,.
   std::vector<Index3D> output_blocks;
   for (const Index3D& block_index : input_blocks) {
-    AxisAlignedBoundingBox box = getAABBOfBlock(block_size, block_index);
-    if (comparison(box.exteriorDistance(center), radius)) {
+    if (isBlockWithRadius(block_index, block_size, center, radius,
+                          comparison)) {
       output_blocks.push_back(block_index);
     }
   }
@@ -36,6 +46,18 @@ std::vector<Index3D> getBlocksWithRadius(
 }
 
 }  // namespace internal
+
+bool isBlockWithinRadius(const Index3D& block_index, float block_size,
+                         const Vector3f& center, float radius) {
+  return internal::isBlockWithRadius(block_index, block_size, center, radius,
+                                     std::less<float>());
+}
+
+bool isBlockOutsideRadius(const Index3D& block_index, float block_size,
+                          const Vector3f& center, float radius) {
+  return internal::isBlockWithRadius(block_index, block_size, center, radius,
+                                     std::greater<float>());
+}
 
 std::vector<Index3D> getBlocksWithinRadius(
     const std::vector<Index3D>& input_blocks, float block_size,
@@ -62,7 +84,6 @@ std::vector<Index3D> getBlocksWithinRadiusOfAABB(
     if (box.exteriorDistance(aabb) > radius) {
       continue;
     }
-
     // Add to the output blocks.
     output_blocks.push_back(block_index);
   }

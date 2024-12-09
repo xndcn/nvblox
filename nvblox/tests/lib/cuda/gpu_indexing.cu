@@ -65,7 +65,7 @@ void getBlockAndVoxelIndexFromPositionInLayerOnGPU(
     const float block_size, const std::vector<Vector3f>& positions,
     std::vector<Index3D>* block_indices, std::vector<Index3D>* voxel_indices) {
   device_vector<Vector3f> positions_device;
-  positions_device.copyFrom(positions);
+  positions_device.copyFromAsync(positions, CudaStreamOwning());
 
   device_vector<Index3D> block_indices_device(positions.size());
   device_vector<Index3D> voxel_indices_device(positions.size());
@@ -77,8 +77,8 @@ void getBlockAndVoxelIndexFromPositionInLayerOnGPU(
       positions_device.data(), block_size, positions_device.size(),
       block_indices_device.data(), voxel_indices_device.data());
 
-  *block_indices = block_indices_device.toVector();
-  *voxel_indices = voxel_indices_device.toVector();
+  *block_indices = block_indices_device.toVectorAsync(CudaStreamOwning());
+  *voxel_indices = voxel_indices_device.toVectorAsync(CudaStreamOwning());
 }
 
 }  // namespace test_utils

@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -47,9 +47,8 @@ struct OccupancyDecayFunctor {
   /// @param voxel_ptr voxel to decay
   /// @return True if the voxel is fully decayed
   __device__ void operator()(OccupancyVoxel* voxel_ptr) const {
-    // If fully decayed, set to decay-to probility
+    // If fully decayed, set to decay-to probability
     if (isFullyDecayed(voxel_ptr)) {
-      // This voxel decayed to zero log odds (0.5 occupancy probability).
       voxel_ptr->log_odds = decay_to_log_odds_;
       return;
     }
@@ -70,29 +69,29 @@ struct OccupancyDecayFunctor {
 };
 
 std::vector<Index3D> OccupancyDecayIntegrator::decay(
-    OccupancyLayer* layer_ptr, const CudaStream cuda_stream) {
+    OccupancyLayer* layer_ptr, const CudaStream& cuda_stream) {
   return decay(layer_ptr, {}, {}, cuda_stream);
 }
 
 std::vector<Index3D> OccupancyDecayIntegrator::decay(
     OccupancyLayer* layer_ptr,
     const DecayBlockExclusionOptions& block_exclusion_options,
-    const CudaStream cuda_stream) {
+    const CudaStream& cuda_stream) {
   return decay(layer_ptr, block_exclusion_options, {}, cuda_stream);
 }
 
 std::vector<Index3D> OccupancyDecayIntegrator::decay(
     OccupancyLayer* layer_ptr,
-    const DecayViewExclusionOptions& view_exclusion_options,
-    const CudaStream cuda_stream) {
+    const ViewBasedInclusionData& view_exclusion_options,
+    const CudaStream& cuda_stream) {
   return decay(layer_ptr, {}, view_exclusion_options, cuda_stream);
 }
 
 std::vector<Index3D> OccupancyDecayIntegrator::decay(
     OccupancyLayer* layer_ptr,
     const std::optional<DecayBlockExclusionOptions>& block_exclusion_options,
-    const std::optional<DecayViewExclusionOptions>& view_exclusion_options,
-    const CudaStream cuda_stream) {
+    const std::optional<ViewBasedInclusionData>& view_exclusion_options,
+    const CudaStream& cuda_stream) {
   // Build the functor which decays a single voxel.
   OccupancyDecayFunctor voxel_decayer(free_space_decay_log_odds_,
                                       occupied_space_decay_log_odds_,
@@ -101,21 +100,6 @@ std::vector<Index3D> OccupancyDecayIntegrator::decay(
   return decayer_.decay(layer_ptr, voxel_decayer, deallocate_decayed_blocks_,
                         block_exclusion_options, view_exclusion_options,
                         cuda_stream);
-}
-
-OccupancyDecayIntegrator::OccupancyDecayIntegrator(DecayMode decay_mode)
-    : DecayIntegratorBase(decay_mode) {
-  if (decay_mode == DecayMode::kDecayToDeallocate) {
-    decay_to_probability(kDefaultProbabilityDeallocate);
-  } else if (decay_mode == DecayMode::kDecayToFree) {
-    // NOTE(alexmillane): When we decay to free we decay to a probability
-    // slightly lower than 0.5 (see default value). Note that if you want blocks
-    // to be free in the ESDF, this will have to be less than the occupied
-    // threshold in the ESDF integrator (which is 0.5 by default).
-    decay_to_probability(kDefaultProbabilityFree);
-  } else {
-    LOG(FATAL) << "Decay mode not implemented";
-  }
 }
 
 float OccupancyDecayIntegrator::free_region_decay_probability() const {
@@ -148,6 +132,20 @@ void OccupancyDecayIntegrator::decay_to_probability(float value) {
       << "The decay-to probility needs to be a valid probability (ie lying "
          "between [0.0, 1.0].)";
   decay_to_log_odds_ = logOddsFromProbability(value);
+}
+
+void OccupancyDecayIntegrator::decay_to_free(bool decay_to_free) {
+  if (decay_to_free) {
+    // NOTE(alexmillane): When we decay to free we decay to a probability
+    // slightly lower than 0.5 (see default value). Note that if you want blocks
+    // to be free in the ESDF, this will have to be less than the occupied
+    // threshold in the ESDF integrator (which is 0.5 by default).
+    decay_to_probability(kDefaultProbabilityFree);
+  } else {
+    // NOTE(remos): When we do not decay to free we decay to 0.5 which means
+    // unkown occupancy.
+    decay_to_probability(kDefaultProbabilityUnknown);
+  }
 }
 
 parameters::ParameterTreeNode OccupancyDecayIntegrator::getParameterTree(

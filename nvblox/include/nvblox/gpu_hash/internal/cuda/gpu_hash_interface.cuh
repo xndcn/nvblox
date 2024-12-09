@@ -22,10 +22,11 @@ limitations under the License.
 #include <stdgpu/cstddef.h>
 #include <stdgpu/unordered_map.cuh>
 
-#include "nvblox/utils/logging.h"
-
+#include "nvblox/core/cuda_stream.h"
 #include "nvblox/core/hash.h"
+#include "nvblox/core/internal/error_check.h"
 #include "nvblox/core/types.h"
+#include "nvblox/utils/logging.h"
 
 namespace nvblox {
 
@@ -37,16 +38,34 @@ using Index3DDeviceHashMapType =
     stdgpu::unordered_map<Index3D, BlockType*, Index3DHash,
                           std::equal_to<Index3D>>;
 
+/// Wrapper around a stdgpu hashmap
 template <typename BlockType>
 class GPUHashImpl {
  public:
   GPUHashImpl() = default;
-  GPUHashImpl(int max_num_blocks);
+
+  /// Construct a hashmap
+  ///
+  /// @param max_num_blocks  Requested capacity of the hashamp
+  /// @param cuda_stream     Cuda stream for GPU work
+  GPUHashImpl(int max_num_blocks, const CudaStream& cuda_stream);
   ~GPUHashImpl();
 
-  size_t size() const { return static_cast<size_t>(max_num_blocks_); }
+  /// Insert everything from other.
+  ///
+  /// @attention Container must be empty
+  /// @attention Capacity must be enough
+  ///
+  /// @param other       Gpu hash to insert from
+  /// @pram cuda_stream  Cuda stream for GPU work
+  void initializeFromAsync(const GPUHashImpl<BlockType>& other,
+                           const CudaStream& cuda_stream);
 
+  ///  Copy of impl_.bucket_size() to avoid costly device-to-host mem
+  /// transfer
   stdgpu::index_t max_num_blocks_;
+
+  /// The implementation
   Index3DDeviceHashMapType<BlockType> impl_;
 };
 

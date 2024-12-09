@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ limitations under the License.
 #include "nvblox/integrators/internal/decay_integrator_base.h"
 #include "nvblox/integrators/internal/decayer.h"
 #include "nvblox/integrators/occupancy_decay_integrator_params.h"
+#include "nvblox/integrators/viewpoint.h"
 #include "nvblox/map/common_names.h"
 
 namespace nvblox {
@@ -31,10 +32,10 @@ namespace nvblox {
 /// occupancy probability) an occupancy layer.
 class OccupancyDecayIntegrator : public DecayIntegratorBase<OccupancyLayer> {
  public:
-  static constexpr float kDefaultProbabilityDeallocate = 0.5;
+  static constexpr float kDefaultProbabilityUnknown = 0.5;
   static constexpr float kDefaultProbabilityFree = 0.49;
 
-  explicit OccupancyDecayIntegrator(DecayMode decay_mode = kDefaultDecayMode);
+  OccupancyDecayIntegrator() = default;
   virtual ~OccupancyDecayIntegrator() = default;
 
   OccupancyDecayIntegrator(const OccupancyDecayIntegrator&) = delete;
@@ -51,7 +52,7 @@ class OccupancyDecayIntegrator : public DecayIntegratorBase<OccupancyLayer> {
   /// @param cuda_stream  Cuda stream for GPU work
   /// @return A vector containing the indices of the blocks deallocated.
   virtual std::vector<Index3D> decay(OccupancyLayer* layer_ptr,
-                                     const CudaStream cuda_stream) override;
+                                     const CudaStream& cuda_stream) override;
 
   /// Decay blocks. Blocks to decay can be excluded based on block index and/or
   /// distance to point.
@@ -63,7 +64,7 @@ class OccupancyDecayIntegrator : public DecayIntegratorBase<OccupancyLayer> {
   virtual std::vector<Index3D> decay(
       OccupancyLayer* layer_ptr,
       const DecayBlockExclusionOptions& block_exclusion_options,
-      const CudaStream cuda_stream) override;
+      const CudaStream& cuda_stream) override;
 
   /// Decay blocks. Voxels can be excluded based on being in view.
   /// @param layer_ptr              Layer to decay
@@ -72,8 +73,8 @@ class OccupancyDecayIntegrator : public DecayIntegratorBase<OccupancyLayer> {
   /// @return A vector containing the indices of the blocks deallocated.
   virtual std::vector<Index3D> decay(
       OccupancyLayer* layer_ptr,
-      const DecayViewExclusionOptions& view_exclusion_options,
-      const CudaStream cuda_stream) override;
+      const ViewBasedInclusionData& view_exclusion_options,
+      const CudaStream& cuda_stream) override;
 
   /// Decay blocks. Optional block and voxel view exclusion.
   /// @param layer_ptr               Layer to decay
@@ -84,8 +85,8 @@ class OccupancyDecayIntegrator : public DecayIntegratorBase<OccupancyLayer> {
   virtual std::vector<Index3D> decay(
       OccupancyLayer* layer_ptr,
       const std::optional<DecayBlockExclusionOptions>& block_exclusion_options,
-      const std::optional<DecayViewExclusionOptions>& view_exclusion_options,
-      const CudaStream cuda_stream) override;
+      const std::optional<ViewBasedInclusionData>& view_exclusion_options,
+      const CudaStream& cuda_stream) override;
 
   /// A parameter getter
   /// The decay probability that is applied to the free region on decay.
@@ -116,6 +117,11 @@ class OccupancyDecayIntegrator : public DecayIntegratorBase<OccupancyLayer> {
   /// to.
   void decay_to_probability(float value);
 
+  /// @brief Setting the appropriate decay_to_probability depending whether we
+  /// want to decay to free or to unknown.
+  /// @param decay_to_free Whether we want to decay to free
+  void decay_to_free(bool decay_to_free);
+
   /// Return the parameter tree.
   /// @return the parameter tree
   virtual parameters::ParameterTreeNode getParameterTree(
@@ -134,8 +140,7 @@ class OccupancyDecayIntegrator : public DecayIntegratorBase<OccupancyLayer> {
   // Decay-to point. The probability value that we decay to. For example, we
   // could decay to 0.5 probability (unknown), or something like ~0.4 (slightly
   // free).
-  float decay_to_log_odds_ =
-      logOddsFromProbability(kDefaultProbabilityDeallocate);
+  float decay_to_log_odds_ = logOddsFromProbability(kDefaultProbabilityUnknown);
 };
 
 }  // namespace nvblox

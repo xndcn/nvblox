@@ -144,7 +144,7 @@ TEST_P(ParameterizedNppImageTest, NppDilateMaskBorder) {
   MonoImage mask(kRows, kCols, memory_type);
 
   // Center pixel 255
-  mask.setZero();
+  mask.setZeroAsync(CudaStreamOwning());
   mask(1, 1) = NPP_MAX_8U;
 
   // Dilate
@@ -162,7 +162,7 @@ TEST_P(ParameterizedNppImageTest, NppDilateMaskBorder) {
   }
 
   // Upper left 255
-  mask.setZero();
+  mask.setZeroAsync(CudaStreamOwning());
   mask(0, 0) = NPP_MAX_8U;
 
   // Dilate again
@@ -191,7 +191,7 @@ TEST_P(ParameterizedNppImageTest, NppSetMasked) {
   getDepthFrame(&depth_frame);
   // Create a mask where every second pixel is true.
   MonoImage mask(depth_frame.rows(), depth_frame.cols(), memory_type);
-  mask.setZero();
+  mask.setZeroAsync(CudaStreamOwning());
   for (int row_idx = 0; row_idx < depth_frame.rows(); row_idx += 2) {
     for (int col_idx = 0; col_idx < depth_frame.cols(); col_idx += 2) {
       mask(row_idx, col_idx) = NPP_MAX_8U;
@@ -231,7 +231,7 @@ TEST_P(ParameterizedNppImageTest, NppSetMasked) {
 
 TEST_P(ParameterizedNppImageTest, setGreaterThanThresholdToValue) {
   MonoImage image(100, 100, MemoryType::kHost);
-  image.setZero();
+  image.setZeroAsync(CudaStreamOwning());
 
   constexpr uint8_t kThreshold = 10;
   constexpr uint8_t kSetToValue = 200;

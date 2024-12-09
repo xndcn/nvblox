@@ -88,7 +88,7 @@ __device__ inline bool interpolateLidarImage(
     const Vector2f& u_px, const int rows, const int cols,
     const float linear_interpolation_max_allowable_difference_m,
     const float nearest_interpolation_max_allowable_squared_dist_to_ray_m,
-    float* image_value);
+    float* image_value, Index2D* u_px_closest_ptr);
 
 }  // namespace interpolation
 }  // namespace nvblox

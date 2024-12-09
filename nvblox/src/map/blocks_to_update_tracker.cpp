@@ -17,19 +17,35 @@ limitations under the License.
 
 namespace nvblox {
 
+/// Safety vent if size is growing too much. This should not happen as long as
+/// the indices are consumed.
+void clearIfTooLarge(Index3DSet& set, const std::string& name) {
+  constexpr size_t kMaxSize = 100'000;
+  if (set.size() > kMaxSize) {
+    LOG(ERROR) << "IndexSet " << name << " is too large: " << set.size()
+               << " > " << kMaxSize
+               << ". This should normally not happen. Clearing the set";
+    set.clear();
+  }
+}
+
 void BlocksToUpdateTracker::addBlocksToUpdate(
     const std::vector<Index3D>& blocks_to_update) {
   // Function definition to update blocks.
   auto funct = [&](const std::vector<Index3D> vec) -> void {
     esdf_blocks_to_update_.insert(vec.begin(), vec.end());
-    if (hasTsdfLayer(projective_layer_type_)) {
-      // The mesh is only updated if the projective layer type is tsdf.
-      mesh_blocks_to_update_.insert(vec.begin(), vec.end());
-    }
+    mesh_blocks_to_update_.insert(vec.begin(), vec.end());
+    layer_streamer_blocks_to_update_.insert(vec.begin(), vec.end());
+
     if (hasFreespaceLayer(projective_layer_type_)) {
       freespace_blocks_to_update_.insert(vec.begin(), vec.end());
     }
   };
+
+  clearIfTooLarge(esdf_blocks_to_update_, "esdf");
+  clearIfTooLarge(mesh_blocks_to_update_, "mesh");
+  clearIfTooLarge(layer_streamer_blocks_to_update_, "layer_streamer");
+  clearIfTooLarge(freespace_blocks_to_update_, "freespace");
 
   // Synchronize (wait for other async calls to finish) and
   // then call the update function asynchronous.
@@ -43,10 +59,9 @@ void BlocksToUpdateTracker::removeBlocksToUpdate(
   auto funct = [&](const std::vector<Index3D> vec) -> void {
     for (const Index3D& idx : vec) {
       esdf_blocks_to_update_.erase(idx);
-      if (hasTsdfLayer(projective_layer_type_)) {
-        // The mesh is only updated if the projective layer type is tsdf.
-        mesh_blocks_to_update_.erase(idx);
-      }
+      mesh_blocks_to_update_.erase(idx);
+      layer_streamer_blocks_to_update_.erase(idx);
+
       if (hasFreespaceLayer(projective_layer_type_)) {
         freespace_blocks_to_update_.erase(idx);
       }
@@ -73,6 +88,9 @@ std::vector<Index3D> BlocksToUpdateTracker::getBlocksToUpdate(
     case BlocksToUpdateType::kFreespace:
       return {freespace_blocks_to_update_.begin(),
               freespace_blocks_to_update_.end()};
+    case BlocksToUpdateType::kLayerStreamer:
+      return {layer_streamer_blocks_to_update_.begin(),
+              layer_streamer_blocks_to_update_.end()};
     default:
       LOG(FATAL) << "BlocksToUpdateType not implemented";
       break;
@@ -92,6 +110,9 @@ void BlocksToUpdateTracker::markBlocksAsUpdated(
         break;
       case BlocksToUpdateType::kFreespace:
         freespace_blocks_to_update_.clear();
+        break;
+      case BlocksToUpdateType::kLayerStreamer:
+        layer_streamer_blocks_to_update_.clear();
         break;
       default:
         LOG(FATAL) << "BlocksToUpdateType not implemented";

@@ -19,8 +19,13 @@ limitations under the License.
 
 namespace nvblox {
 
-constexpr Param<bool>::Description kDecayIntegratorBaseDeallocateDecayedBlocks{
+constexpr Param<bool>::Description kDecayIntegratorDeallocateDecayedBlocks{
     "decay_integrator_deallocate_decayed_blocks", true,
     "Whether or not to deallocate fully decayed blocks"};
+
+struct DecayIntegratorBaseParams {
+  Param<bool> decay_integrator_deallocate_decayed_blocks{
+      kDecayIntegratorDeallocateDecayedBlocks};
+};
 
 }  // namespace nvblox

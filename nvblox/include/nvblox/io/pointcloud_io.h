@@ -21,6 +21,7 @@ limitations under the License.
 #include "nvblox/map/common_names.h"
 #include "nvblox/map/layer.h"
 #include "nvblox/map/voxels.h"
+#include "nvblox/sensors/pointcloud.h"
 
 namespace nvblox {
 namespace io {
@@ -39,6 +40,24 @@ template <typename VoxelType>
 bool outputVoxelLayerToPly(const VoxelBlockLayer<VoxelType>& layer,
                            const std::string& filename);
 
+/// @brief Function to store a pointcloud as a ply file.
+/// @param pointcloud The pointcloud to store as a ply file.
+/// @param filename Filename to store the ply to.
+/// @param cuda_stream cuda stream for copying the points to CPU.
+/// @return  Boolean to indicate success or failure.
+bool outputPointcloudToPly(const Pointcloud& pointcloud,
+                           const std::string& filename,
+                           const CudaStream& cuda_stream = CudaStreamOwning());
+
+/// @brief Function to store 3D points as a ply file.
+/// @param points The points represented as a vector of Vector3f
+/// @param intensities Corresponding intensities to store with the points.
+/// @param filename Filename to store the ply to.
+/// @return Boolean to indicate success or failure.
+bool outputPointsToPly(const std::vector<Vector3f>& points,
+                       const std::vector<float>& intensities,
+                       const std::string& filename);
+
 /// @brief Function to store 3D points as a ply file.
 /// @param points The points represented as a 3*X matrix.
 /// @param filename Filename to store the ply to.
@@ -54,6 +73,14 @@ bool outputPointMatrixToPly(const Eigen::Matrix3Xf& points,
 bool outputPointMatrixToPly(const Eigen::Matrix3Xf& pointcloud,
                             const Eigen::VectorXf& intensities,
                             const std::string& filename);
+
+/// @brief Function to store 3D points as a ply file.
+/// @param pointcloud The points represented by a list of 3D vectors.
+/// @param filename Filename to store the ply to
+/// @return Boolean to indicate success or failure.
+bool outputPointVectorToPly(const std::vector<Vector3f>& pointcloud,
+                            const std::string& filename);
+
 }  // namespace io
 }  // namespace nvblox
 

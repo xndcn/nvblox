@@ -28,16 +28,29 @@ void incrementOnStreamInFunction(CudaStream* stream_ptr, int* int_dev_ptr) {
 }
 
 TEST(CudaStreamTest, OwningStreamTest) {
-  CudaStreamOwning cuda_stream;
+  std::shared_ptr<CudaStreamOwning> blocking_async =
+      std::dynamic_pointer_cast<CudaStreamOwning>(
+          CudaStream::createCudaStream(CudaStreamType::kBlocking));
+  std::shared_ptr<CudaStreamOwning> non_blocking_default =
+      std::dynamic_pointer_cast<CudaStreamOwning>(
+          CudaStream::createCudaStream(CudaStreamType::kNonBlocking));
 
   auto int_ptr = make_unified<int>(MemoryType::kUnified, 0);
   EXPECT_EQ(*int_ptr, 0);
-  test_utils::incrementOnStream(int_ptr.get(), &cuda_stream);
+
+  test_utils::incrementOnStream(int_ptr.get(), blocking_async.get());
   EXPECT_EQ(*int_ptr, 1);
 
   // Test the we can use a stream through the base class interface.
-  incrementOnStreamInFunction(&cuda_stream, int_ptr.get());
+  incrementOnStreamInFunction(blocking_async.get(), int_ptr.get());
   EXPECT_EQ(*int_ptr, 2);
+
+  test_utils::incrementOnStream(int_ptr.get(), non_blocking_default.get());
+  EXPECT_EQ(*int_ptr, 3);
+
+  // Test the we can use a stream through the base class interface.
+  incrementOnStreamInFunction(non_blocking_default.get(), int_ptr.get());
+  EXPECT_EQ(*int_ptr, 4);
 
   // NOTE(alex.millane): We would like to test that the stream is properly
   // destoyed when the owning allocator is, but this is currently impossible
@@ -51,6 +64,14 @@ TEST(CudaStreamTest, NonOwningStreamTest) {
 
   // Wrapping it in a non-owning allocator
   CudaStreamNonOwning cuda_stream(&raw_cuda_stream);
+
+  std::shared_ptr<DefaultStream> legacy_default =
+      std::dynamic_pointer_cast<DefaultStream>(
+          CudaStream::createCudaStream(CudaStreamType::kLegacyDefault));
+
+  std::shared_ptr<DefaultStream> per_thread_default =
+      std::dynamic_pointer_cast<DefaultStream>(
+          CudaStream::createCudaStream(CudaStreamType::kPerThreadDefault));
 
   auto int_ptr = make_unified<int>(MemoryType::kUnified, 0);
   EXPECT_EQ(*int_ptr, 0);
@@ -68,6 +89,22 @@ TEST(CudaStreamTest, NonOwningStreamTest) {
 
   // Tear down the raw stream
   checkCudaErrors(cudaStreamDestroy(raw_cuda_stream));
+
+  // Test we can use legacy default stream.
+  test_utils::incrementOnStream(int_ptr.get(), legacy_default.get());
+  EXPECT_EQ(*int_ptr, 4);
+
+  // Test the we can use a stream through the base class interface.
+  incrementOnStreamInFunction(legacy_default.get(), int_ptr.get());
+  EXPECT_EQ(*int_ptr, 5);
+
+  // Test we can use per-thread default stream.
+  test_utils::incrementOnStream(int_ptr.get(), per_thread_default.get());
+  EXPECT_EQ(*int_ptr, 6);
+
+  // Test the we can use a stream through the base class interface.
+  incrementOnStreamInFunction(per_thread_default.get(), int_ptr.get());
+  EXPECT_EQ(*int_ptr, 7);
 }
 
 int main(int argc, char** argv) {

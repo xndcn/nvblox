@@ -73,6 +73,30 @@ bool outputVoxelLayerToPly(const EsdfLayer& layer,
   return outputVoxelLayerToPly<EsdfVoxel>(layer, filename, lambda);
 }
 
+bool outputPointcloudToPly(const Pointcloud& pointcloud,
+                           const std::string& filename,
+                           const CudaStream& cuda_stream) {
+  // Create a ply writer object.
+  io::PlyWriter writer(filename);
+  std::vector<Vector3f> points = pointcloud.points().toVectorAsync(cuda_stream);
+  writer.setPoints(&points);
+
+  // Write out the ply.
+  return writer.write();
+}
+
+bool outputPointsToPly(const std::vector<Vector3f>& points,
+                       const std::vector<float>& intensities,
+                       const std::string& filename) {
+  // Create a ply writer object.
+  io::PlyWriter writer(filename);
+  writer.setPoints(&points);
+  writer.setIntensities(&intensities);
+
+  // Write out the ply.
+  return writer.write();
+}
+
 bool outputPointMatrixToPly(const Eigen::Matrix3Xf& pointcloud,
                             const std::string& filename) {
   Eigen::VectorXf intensities(pointcloud.cols());
@@ -103,6 +127,15 @@ bool outputPointMatrixToPly(const Eigen::Matrix3Xf& pointcloud,
 
   // Write out the ply.
   return writer.write();
+}
+
+bool outputPointVectorToPly(const std::vector<Vector3f>& pointcloud,
+                            const std::string& filename) {
+  Eigen::Matrix3Xf crossing_points_mat(3, pointcloud.size());
+  for (size_t i = 0; i < pointcloud.size(); i++) {
+    crossing_points_mat.col(i) = pointcloud[i];
+  }
+  return io::outputPointMatrixToPly(crossing_points_mat, filename);
 }
 
 }  // namespace io

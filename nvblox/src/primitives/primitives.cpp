@@ -47,6 +47,26 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 namespace nvblox {
 namespace primitives {
 
+std::string Primitive::toString(const Type& type) {
+  switch (type) {
+    case Type::kPlane:
+      return "kPlane";
+      break;
+    case Type::kCube:
+      return "kCube";
+      break;
+    case Type::kSphere:
+      return "kSphere";
+      break;
+    case Type::kCylinder:
+      return "kCylinder";
+      break;
+    default:
+      LOG(FATAL) << "Primitive type not recognized.";
+      break;
+  }
+}
+
 float Sphere::getDistanceToPoint(const Vector3f& point) const {
   float distance = (center_ - point).norm() - radius_;
   return distance;

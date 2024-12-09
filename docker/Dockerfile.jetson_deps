@@ -22,7 +22,7 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip
 RUN wget http://ports.ubuntu.com/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2_arm64.deb \
     && sudo dpkg -i libssl1.1_1.1.1f-1ubuntu2_arm64.deb
 
-# Upgrade cmake to 3.23.2
+# Upgrade cmake to 3.22.1
 # We need this to build with c++17 under CMAKE.
 # NOTE: The commands below are taken from isaac_ros_common/docker/Dockerfile.aarch64
 RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null \
@@ -31,7 +31,7 @@ RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/nul
     && rm /usr/share/keyrings/kitware-archive-keyring.gpg \
     && apt-get install -y kitware-archive-keyring \
     && apt-get remove -y cmake && apt-get purge -y cmake && apt-get remove -y cmake-data && apt-get purge -y cmake \
-    && apt-get install -y cmake=3.23.2-0kitware1ubuntu20.04.1 cmake-data=3.23.2-0kitware1ubuntu20.04.1 \
+    && apt-get install -y cmake=3.22.1-0kitware1ubuntu20.04.1 cmake-data=3.22.1-0kitware1ubuntu20.04.1 \
     && cmake --version \
 && rm -rf /var/lib/apt/lists/* \
 && apt-get clean

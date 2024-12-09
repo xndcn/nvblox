@@ -23,36 +23,57 @@ limitations under the License.
 using namespace nvblox;
 
 TEST(RatesTest, KnownRateTest) {
-  constexpr int kNumTicks = 100;
-  constexpr float kRateHz = 100;
+  // This test can sometimes be flaky when the system is under load. We
+  // therefore allow for some flakiness.
+  constexpr int kMaxNumRetries = 10;
+  bool test_passed = false;
 
-  constexpr float sleep_duration_s = 1.0f / static_cast<float>(kRateHz);
-  constexpr int kSecondsToNanoSeconds = 1e9;
-  constexpr int sleep_duration_ns =
-      static_cast<int>(sleep_duration_s * kSecondsToNanoSeconds);
+  for (int i = 0; i < kMaxNumRetries && !test_passed; ++i) {
+    constexpr int kNumTicks = 100;
+    constexpr float kRateHz = 100;
 
-  for (int i = 0; i < kNumTicks; i++) {
-    timing::Rates::tick("rates_test/test_1");
-    timing::Rates::tick("rates_test/test_2");
-    std::this_thread::sleep_for(std::chrono::nanoseconds(sleep_duration_ns));
+    constexpr float sleep_duration_s = 1.0f / static_cast<float>(kRateHz);
+    constexpr int kSecondsToNanoSeconds = 1e9;
+    constexpr int sleep_duration_ns =
+        static_cast<int>(sleep_duration_s * kSecondsToNanoSeconds);
+
+    for (int j = 0; j < kNumTicks; j++) {
+      timing::Rates::tick("rates_test/test_1");
+      timing::Rates::tick("rates_test/test_2");
+      std::this_thread::sleep_for(std::chrono::nanoseconds(sleep_duration_ns));
+    }
+    LOG(INFO) << timing::Rates::Print();
+    const float estimated_rate =
+        timing::Rates::getMeanRateHz("rates_test/test_1");
+    const float estimated_rate_2 =
+        timing::Rates::getMeanRateHz("rates_test/test_2");
+    LOG(INFO) << "We tried to loop at: " << kRateHz
+              << " Hz, and measured: " << estimated_rate << " Hz";
+    // NOTE(alexmillane): sleep_for can be quite innaccurate. Especially if
+    // there's high CPU usage on the machine running the test. This is why we
+    // have a large tolerance here. We may even have to increase it further.
+    constexpr float kRateToleranceHz = 20.0;
+    // NOTE(alexmillane): On the jetson I observed differences of ~0.001 between
+    // the two timers, during high loads. So I over estimate this parameter to
+    // not generate a flakey test.
+    constexpr float kRateEps = 0.1;
+
+    const bool rate_within_tolerance =
+        std::fabs(estimated_rate - kRateHz) < kRateToleranceHz;
+    const bool rates_near =
+        std::fabs(estimated_rate - estimated_rate_2) < kRateEps;
+
+    EXPECT_TRUE(rate_within_tolerance);
+    EXPECT_TRUE(rates_near);
+
+    test_passed = rate_within_tolerance && rates_near;
+
+    if (!test_passed) {
+      LOG(WARNING) << "KnownRateTest is flaky. Iteration: " << i << " out of "
+                   << kMaxNumRetries;
+      std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
   }
-  LOG(INFO) << timing::Rates::Print();
-  const float estimated_rate =
-      timing::Rates::getMeanRateHz("rates_test/test_1");
-  const float estimated_rate_2 =
-      timing::Rates::getMeanRateHz("rates_test/test_2");
-  LOG(INFO) << "We tried to loop at: " << kRateHz
-            << " Hz, and measured: " << estimated_rate << " Hz";
-  // NOTE(alexmillane): sleep_for can be quite innaccurate. Especially if
-  // there's high CPU usage on the machine running the test. This is why we have
-  // a large tolerance here. We may even have to increase it further.
-  constexpr float kRateToleranceHz = 20.0;
-  // NOTE(alexmillane): On the jetson I observed differences of ~0.001 between
-  // the two timers, during high loads. So I over estimate this parameter to not
-  // generate a flakey test.
-  constexpr float kRateEps = 0.1;
-  EXPECT_NEAR(estimated_rate, kRateHz, kRateToleranceHz);
-  EXPECT_NEAR(estimated_rate, estimated_rate_2, kRateEps);
 }
 
 TEST(RatesTest, NonExistingTicker) {

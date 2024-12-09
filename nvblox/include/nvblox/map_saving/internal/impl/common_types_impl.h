@@ -43,7 +43,7 @@ LayerSerializationFunctions bindDefaultFunctions() {
   LayerSerializationFunctions::SerializeLayerDataFunction
       lambda_serialize_data = [](const BaseLayer* base_layer,
                                  const Index3D& index,
-                                 const CudaStream cuda_stream) {
+                                 const CudaStream& cuda_stream) {
         const LayerType& layer = *dynamic_cast<const LayerType*>(base_layer);
 
         return serializeLayerDataAtIndex(layer, index, cuda_stream);
@@ -61,7 +61,7 @@ LayerSerializationFunctions bindDefaultFunctions() {
 
   LayerSerializationFunctions::AddDataToLayerFunction lambda_add_data =
       [](const Index3D& index, const std::vector<Byte>& data,
-         BaseLayer* base_layer, const CudaStream cuda_stream) {
+         BaseLayer* base_layer, const CudaStream& cuda_stream) {
         LayerType* layer = dynamic_cast<LayerType*>(base_layer);
 
         addDataToLayer(index, data, layer, cuda_stream);

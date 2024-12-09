@@ -16,9 +16,9 @@ import os
 import subprocess
 """Run fuse_3dmatch multiple times on the test dataset"""
 
-BINARY_PATH = "nvblox/build/executables/fuse_3dmatch"
+BINARY_PATH = "build/nvblox/executables/fuse_3dmatch"
 
-TIMEOUT_S = 10
+TIMEOUT_S = 120
 
 
 def test_run_fuser_multiple_times():

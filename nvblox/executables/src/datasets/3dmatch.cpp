@@ -116,12 +116,12 @@ std::unique_ptr<ImageLoader<ColorImage>> createColorImageLoader(
 }  // namespace internal
 
 std::unique_ptr<Fuser> createFuser(const std::string base_path,
-                                   const int seq_id) {
+                                   const int seq_id, bool init_from_gflags) {
   auto data_loader = DataLoader::create(base_path, seq_id, false);
   if (!data_loader) {
     return std::unique_ptr<Fuser>();
   }
-  return std::make_unique<Fuser>(std::move(data_loader));
+  return std::make_unique<Fuser>(std::move(data_loader), init_from_gflags);
 }
 
 std::unique_ptr<DataLoader> DataLoader::create(const std::string& base_path,
@@ -139,12 +139,13 @@ std::unique_ptr<DataLoader> DataLoader::create(const std::string& base_path,
 
 DataLoader::DataLoader(const std::string& base_path, const int seq_id,
                        bool multithreaded)
-    : RgbdDataLoaderInterface(threedmatch::internal::createDepthImageLoader(
-                                  base_path, seq_id, multithreaded),
-                              threedmatch::internal::createColorImageLoader(
-                                  base_path, seq_id, multithreaded)),
+    : RgbdDataLoaderInterface(),
       base_path_(base_path),
-      seq_id_(seq_id) {
+      seq_id_(seq_id),
+      depth_image_loader_(threedmatch::internal::createDepthImageLoader(
+          base_path, seq_id, multithreaded)),
+      color_image_loader_(threedmatch::internal::createColorImageLoader(
+          base_path, seq_id, multithreaded)) {
   // If the base path doesn't exist return fail
   if (!std::filesystem::exists(base_path)) {
     LOG(WARNING) << "Tried to create a dataloader with a non-existant path.";
@@ -235,6 +236,25 @@ DataLoadResult DataLoader::loadNext(DepthImage* depth_frame_ptr,
   timer_file_pose.Stop();
 
   return DataLoadResult::kSuccess;
+}
+
+DataLoadResult DataLoader::loadNext(DepthImage* depth_frame_ptr,
+                                    Transform* T_L_D_ptr,
+                                    Camera* depth_camera_ptr,
+                                    ColorImage* color_frame_ptr,
+                                    Transform* T_L_C_ptr,
+                                    Camera* color_camera_ptr) {
+  // NOTE: The other pointers are checked non-null below
+  CHECK_NOTNULL(color_frame_ptr);
+  CHECK_NOTNULL(T_L_C_ptr);
+  CHECK_NOTNULL(color_camera_ptr);
+  // For the replica dataset the depth and color cameras are the same, so just
+  // copying over.
+  auto result =
+      loadNext(depth_frame_ptr, T_L_D_ptr, depth_camera_ptr, color_frame_ptr);
+  *T_L_C_ptr = *T_L_D_ptr;
+  *color_camera_ptr = *depth_camera_ptr;
+  return result;
 }
 
 }  // namespace threedmatch

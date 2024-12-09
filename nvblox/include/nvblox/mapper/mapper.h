@@ -1,5 +1,5 @@
 /*
-Copyright 2022-2023 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ limitations under the License.
 #include "nvblox/integrators/projective_color_integrator.h"
 #include "nvblox/integrators/projective_occupancy_integrator.h"
 #include "nvblox/integrators/projective_tsdf_integrator.h"
+#include "nvblox/integrators/shape_clearer.h"
 #include "nvblox/integrators/tsdf_decay_integrator.h"
 #include "nvblox/map/blocks_to_update_tracker.h"
 #include "nvblox/map/blox.h"
@@ -36,11 +37,12 @@ limitations under the License.
 #include "nvblox/map/voxels.h"
 #include "nvblox/mapper/mapper_params.h"
 #include "nvblox/mesh/mesh_integrator.h"
-#include "nvblox/mesh/mesh_streamer.h"
 #include "nvblox/semantics/image_masker.h"
 #include "nvblox/sensors/camera.h"
 #include "nvblox/sensors/depth_preprocessing.h"
 #include "nvblox/sensors/lidar.h"
+#include "nvblox/serialization/layer_cake_streamer.h"
+#include "nvblox/serialization/layer_streamer.h"
 
 namespace nvblox {
 
@@ -133,7 +135,24 @@ class Mapper : public MapperBase {
   /// @param params The struct containing the params.
   void setMapperParams(const MapperParams& params);
 
-  /// Integrates a depth frame into the tsdf reconstruction.
+  /// Integrates a depth frame
+  ///
+  /// The depth frame will be integrated into either the TSDF or occupancy
+  /// reconstruction, depending on the mapping mode.
+  ///
+  /// Can be called with either a DepthImage or a MaskedDepthImage. If a mask is
+  /// provided, only active (non-zero) depth pixels will become part of the
+  /// reconstruction. If no mask is provided, all pixels will be treated as
+  /// active. The unmasked pixels are treated differently depending on the
+  /// projective integrator type used:
+  ///
+  /// TSDF: Unmasked depth is used to update voxels only up until the
+  /// positive truncation distance. The end effect is that the surface will not
+  /// be reconstructed, but any voxels in front of the surface will be cleared.
+  ///
+  /// Occupancy: Voxels updated with unmasked depth are treated as
+  /// "unobserved".
+  ///
   ///@param depth_frame Depth frame to integrate. Depth in the image is
   ///                   specified as a float representing meters.
   ///@param T_L_C Pose of the camera, specified as a transform from
@@ -141,6 +160,8 @@ class Mapper : public MapperBase {
   ///@param camera Intrinsics model of the camera.
   void integrateDepth(const DepthImage& depth_frame, const Transform& T_L_C,
                       const Camera& camera);
+  void integrateDepth(const MaskedDepthImageConstView& depth_frame,
+                      const Transform& T_L_C, const Camera& camera);
 
   /// Integrates a color frame into the reconstruction.
   ///@param color_frame Color image to integrate.
@@ -151,8 +172,7 @@ class Mapper : public MapperBase {
                       const Camera& camera);
 
   /// Integrates a 3D LiDAR scan into the reconstruction.
-  ///@param depth_frame Depth image representing the LiDAR scan. To convert a
-  ///                   lidar scan to a DepthImage see TODOOO.
+  ///@param depth_frame Depth image representing the LiDAR scan.
   ///@param T_L_C Pose of the LiDAR, specified as a transform from LiDAR-frame
   ///             to Layer-frame transform.
   ///@param lidar Intrinsics model of the LiDAR.
@@ -165,6 +185,10 @@ class Mapper : public MapperBase {
   /// Decay the full occupancy layer.
   void decayOccupancy();
 
+  /// @brief Clear the TSDF layer inside the passed shapes.
+  /// @param shapes Vector of shapes to clear.
+  void clearTsdfInsideShapes(const std::vector<BoundingShape>& shapes);
+
   /// Updates the freespace blocks.
   /// @param update_time_ms The time of the update in miliseconds.
   /// @param update_full_layer Whether to update the full layer or only the
@@ -172,21 +196,60 @@ class Mapper : public MapperBase {
   void updateFreespace(Time update_time_ms, UpdateFullLayer update_full_layer =
                                                 UpdateFullLayer::kNo);
 
+  /// Updates the freespace blocks (in view).
+  /// @param update_time_ms The time of the update in miliseconds.
+  /// @param T_L_C The pose of the camera.
+  /// @param camera The intrinsics of the camera.
+  /// @param depth_frame The depth image.
+  /// @param update_full_layer Whether to update the full layer or only the
+  /// blocks that require and update.
+  void updateFreespace(
+      Time update_time_ms, const Transform& T_L_C, const Camera& camera,
+      const DepthImage& depth_frame,
+      UpdateFullLayer update_full_layer = UpdateFullLayer::kNo);
+
   /// Updates the mesh blocks.
   /// @param update_full_layer Whether to update the full layer or only the
   /// blocks that require and update. Useful if loading a layer cake without a
   /// mesh layer, for example.
-  /// @param maybe_T_L_C Pose of the camera, specified as a transform from
-  ///                    Camera-frame to Layer-frame transform. If given,
-  ///                    returned mesh blocks will be limited to the ones
-  ///                    surrounding the camera position.
-  /// @return A serialized mesh. If mesh_bandwidth_limit_mbps is positive,
-  ///         the size of the mesh is limited based on estimated bandwidth
-  ///         capacity.
-  std::shared_ptr<const SerializedMesh> updateMesh(
-      UpdateFullLayer update_full_layer = UpdateFullLayer::kNo,
-      const std::optional<Transform>& maybe_T_L_C = std::nullopt,
-      bool serialize_full_mesh = false);
+  void updateMesh(UpdateFullLayer update_full_layer = UpdateFullLayer::kNo);
+
+  /// Serialize selected layers.
+  ///
+  /// Will update serialized layers to contain new blocks added to the map since
+  /// the last call to this function. The resulting serialized layers can be
+  /// accessed by individual getters.
+  ///
+  /// @param layer_type_bitmask Bitmask determining which layers to serialize
+  /// @param bandwidth_limit_mbps Max bandwidth. Set to negative value for
+  /// unlimited.
+  ///        Note that this limit is per layer, i.e. the actual bandwidth will
+  ///        exceed the limit if more than one layer is serialized.
+  /// @param maybe_exclusion_center Optional center for radiual block exclusion.
+  /// Typically set to robot translation.
+  void serializeSelectedLayers(
+      const LayerTypeBitMask layer_type_bitmask,
+      const float bandwidth_limit_mbps,
+      const BlockExclusionParams& maybe_exclusion_params =
+          BlockExclusionParams());
+
+  /// Return the serialized mesh layer.
+  std::shared_ptr<const SerializedMeshLayer> serializedMeshLayer();
+
+  /// Return the serialized TSDF layer.
+  std::shared_ptr<const SerializedTsdfLayer> serializedTsdfLayer();
+
+  /// Return the serialized ESDF layer.
+  std::shared_ptr<const SerializedEsdfLayer> serializedEsdfLayer();
+
+  /// Return the serialized color layer.
+  std::shared_ptr<const SerializedColorLayer> serializedColorLayer();
+
+  /// Return the serialized occupancy layer.
+  std::shared_ptr<const SerializedOccupancyLayer> serializedOccupancyLayer();
+
+  /// Return the serialized freespace layer.
+  std::shared_ptr<const SerializedFreespaceLayer> serializedFreespaceLayer();
 
   /// Updates the ESDF blocks.
   /// Note that currently we limit the Mapper class to calculating *either*
@@ -208,11 +271,13 @@ class Mapper : public MapperBase {
   /// stored in a single voxel thick layer in ESDF layer.
   /// @param update_full_layer Whether to update the full layer or only the
   /// blocks that require and update.
+  /// @param ground_plane If provided, the esdf is sliced along a parameterized
+  /// instead of horizontally.
   /// @return The indices of the blocks that were updated in this call.
   ///@return std::vector<Index3D>  The indices of the blocks that were updated
   ///        in this call.
-  void updateEsdfSlice(
-      UpdateFullLayer update_full_layer = UpdateFullLayer::kNo);
+  void updateEsdfSlice(UpdateFullLayer update_full_layer = UpdateFullLayer::kNo,
+                       std::optional<Plane> ground_plane = std::nullopt);
 
   /// Clears the reconstruction outside a radius around a center point,
   /// deallocating the memory.
@@ -260,6 +325,9 @@ class Mapper : public MapperBase {
   /// Getter
   ///@return const MeshLayer& Mesh layer
   const MeshLayer& mesh_layer() const { return layers_.get<MeshLayer>(); }
+  /// Getter
+  /// @return const LayerCakeStreamer& The layer cake streamer.
+  const LayerCakeStreamer& layer_streamers() const { return layer_streamers_; }
 
   /// Getter
   ///@return LayerCake& The collection of layers mapped.
@@ -286,6 +354,9 @@ class Mapper : public MapperBase {
   /// Getter
   ///@return MeshLayer& Mesh layer
   MeshLayer& mesh_layer() { return *layers_.getPtr<MeshLayer>(); }
+  /// Getter
+  /// @return const LayerCakeStreamer& The layer cake streamer.
+  LayerCakeStreamer& layer_streamers() { return layer_streamers_; }
 
   /// Getter
   ///@return const ProjectiveTsdfIntegrator& TSDF integrator used for
@@ -331,14 +402,15 @@ class Mapper : public MapperBase {
     return tsdf_decay_integrator_;
   }
   /// Getter
+  ///@return const TsdfShapeClearer& TSDF clearer used for
+  ///        clearing tsdf inside given shapes.
+  const TsdfShapeClearer& tsdf_shape_clearer() const {
+    return tsdf_shape_clearer_;
+  }
+  /// Getter
   ///@return const ProjectiveColorIntegrator& Color integrator.
   const ProjectiveColorIntegrator& color_integrator() const {
     return color_integrator_;
-  }
-  /// Getter
-  ///@return const MeshStreamerOldestBlocks& Mesh streamer.
-  const MeshStreamerOldestBlocks& mesh_streamer() const {
-    return mesh_streamer_;
   }
   /// Getter
   ///@return const MeshIntegrator& Mesh integrator
@@ -387,6 +459,10 @@ class Mapper : public MapperBase {
     return tsdf_decay_integrator_;
   }
   /// Getter
+  ///@return TsdfShapeClearer& TSDF clearer used for
+  ///        clearing tsdf inside given shapes.
+  TsdfShapeClearer& tsdf_shape_clearer() { return tsdf_shape_clearer_; }
+  /// Getter
   ///@return ProjectiveColorIntegrator& Color integrator.
   ProjectiveColorIntegrator& color_integrator() { return color_integrator_; }
   /// Getter
@@ -395,9 +471,6 @@ class Mapper : public MapperBase {
   /// Getter
   ///@return EsdfIntegrator& ESDF integrator
   EsdfIntegrator& esdf_integrator() { return esdf_integrator_; }
-  /// Getter
-  ///@return MeshStreamerOldestBlocks& Mesh streamer.
-  MeshStreamerOldestBlocks& mesh_streamer() { return mesh_streamer_; }
   /// Getter
   /// @return The voxel size in meters
   float voxel_size_m() const { return voxel_size_m_; };
@@ -430,52 +503,6 @@ class Mapper : public MapperBase {
     depth_preprocessing_num_dilations_ = depth_preprocessing_num_dilations;
   }
 
-  /// Getter for mesh_bandwidth_limit_mbps that limits the mesh size returned by
-  /// updateMesh
-  /// @return mesh_bandwidth_limit_mbps
-  float mesh_bandwidth_limit_mbps() const { return mesh_bandwidth_limit_mbps_; }
-  /// Setter for mesh_bandwidth_limit_mbps that limits the mesh size returned by
-  /// updateMesh. Set to negative number for unlimited size.
-  /// @param mesh_bandwidth_limit_mbps
-  void mesh_bandwidth_limit_mbps(const float mesh_bandwidth_limit_mbps) {
-    mesh_bandwidth_limit_mbps_ = mesh_bandwidth_limit_mbps;
-  }
-
-  /// A parameter getter
-  /// The minimum height, in meters, to consider obstacles part of the 2D ESDF
-  /// slice.
-  /// @returns esdf_slice_min_height
-  float esdf_slice_min_height() const { return esdf_slice_min_height_; }
-  /// A parameter setter
-  /// See esdf_slice_min_height().
-  /// @param esdf_slice_min_height
-  void esdf_slice_min_height(const float esdf_slice_min_height) {
-    esdf_slice_min_height_ = esdf_slice_min_height;
-  }
-  /// A parameter getter
-  /// The maximum height, in meters, to consider obstacles part of the 2D ESDF
-  /// slice.
-  /// @returns esdf_slice_max_height
-  float esdf_slice_max_height() const { return esdf_slice_max_height_; }
-  /// A parameter setter
-  /// See esdf_slice_max_height().
-  /// @param esdf_slice_max_height
-  void esdf_slice_max_height(const float esdf_slice_max_height) {
-    esdf_slice_max_height_ = esdf_slice_max_height;
-  }
-  /// A parameter getter
-  /// The output slice height for the distance slice and ESDF pointcloud. Does
-  /// not need to be within min and max height below. In units of meters.
-  /// @returns esdf_slice_height
-  float esdf_slice_height() const { return esdf_slice_height_; }
-  /// A parameter setter
-  /// See esdf_slice_height().
-  /// @param esdf_slice_height
-  void esdf_slice_height(const float esdf_slice_height) {
-    esdf_slice_height_ = esdf_slice_height;
-  }
-
-  /// A parameter getter
   /// Whether to exclude voxel contained observed in the the last depth frame
   /// passed to integrateDepth from the voxels which are decayed.
   bool exclude_last_view_from_decay() const {
@@ -534,29 +561,44 @@ class Mapper : public MapperBase {
   /// @return the parameter tree string
   virtual std::string getParametersAsString() const;
 
-  /// @brief Get the mesh blocks that have been cleared in the mesh layer since
-  /// the last call of the function. This information is needed to remove them
-  /// from the visualizer.
+  /// @brief Get the blocks that have been cleared
+  /// since the last call of the function. This information is needed to
+  /// remove them from the visualizer.
   /// @param blocks_to_ignore Blocks that should not part of the returned
   /// vector.
-  /// @return Vector of cleared mesh block indices.
-  std::vector<Index3D> getClearedMeshBlocks(
+  /// @return Vector of cleared block indices.
+  std::vector<Index3D> getClearedBlocks(
       const std::vector<Index3D>& blocks_to_ignore);
 
- protected:
-  /// Perform preprocessing on a depth image
-  const DepthImage& preprocessDepthImageAsync(const DepthImage& depth_image);
+  /// @brief Marks a list of block indices as needing an update.
+  /// the mapper is tracking changes to map to batch updates to dependent parts.
+  /// This can be useful when directly modify the layers in the mapper.
+  /// Internally
+  /// @param blocks Indices that require an update.
+  void markBlocksForUpdate(const std::vector<Index3D>& blocks);
 
-  /// Return a serialized mesh from the mesh streamer.
-  std::shared_ptr<const SerializedMesh> createSerializedMesh(
-      const std::vector<Index3D>& mesh_blocks_to_stream,
-      const std::optional<Transform>& maybe_T_L_C = std::nullopt);
+ protected:
+  /// Update the freespace layer, with an optional viewpoint.
+  void updateFreespace(Time update_time_ms,
+                       std::optional<ViewBasedInclusionData> view_to_update,
+                       UpdateFullLayer update_full_layer);
+
+  /// Serialize layers needed for color visualization
+  void serializeColorTsdfAndFreespaceLayers(
+      const std::vector<Index3D>& blocks_to_serialize,
+      const LayerTypeBitMask layer_type_bitmask,
+      const float bandwidth_limit_mbps,
+      const BlockExclusionParams& exclusion_params);
+
+  /// Perform preprocessing on a depth image
+  const DepthImage& preprocessDepthImageAsync(
+      const DepthImageConstView& depth_image);
 
   /// @brief Get the esdf, mesh or freespace blocks that need and update.
-  /// @param blocks_to_update_type The type of blocks you want to get the vector
-  /// for.
-  /// @param update_full_layer Whether to return all block indices (for updating
-  /// the full layer) or only the blocks that need an update.
+  /// @param blocks_to_update_type The type of blocks you want to get the
+  /// vector for.
+  /// @param update_full_layer Whether to return all block indices (for
+  /// updating the full layer) or only the blocks that need an update.
   /// @return Vector of block indices to update.
   std::vector<Index3D> getBlocksToUpdate(
       BlocksToUpdateType blocks_to_update_type,
@@ -591,14 +633,13 @@ class Mapper : public MapperBase {
   ProjectiveOccupancyIntegrator lidar_occupancy_integrator_;
   OccupancyDecayIntegrator occupancy_decay_integrator_;
   TsdfDecayIntegrator tsdf_decay_integrator_;
+  TsdfShapeClearer tsdf_shape_clearer_;
   ProjectiveColorIntegrator color_integrator_;
   MeshIntegrator mesh_integrator_;
   EsdfIntegrator esdf_integrator_;
 
-  /// Esdf 2D slice parameters
-  float esdf_slice_min_height_ = kEsdfSliceMinHeightParamDesc.default_value;
-  float esdf_slice_max_height_ = kEsdfSliceMaxHeightParamDesc.default_value;
-  float esdf_slice_height_ = kEsdfSliceHeightParamDesc.default_value;
+  // Layer Streamers
+  LayerCakeStreamer layer_streamers_;
 
   /// Preprocessing depth maps prior to integration.
   /// Currently, the only preprocessing step is to dilate the invalid regions
@@ -611,17 +652,12 @@ class Mapper : public MapperBase {
   std::shared_ptr<DepthImage> preprocessed_depth_image_ =
       std::make_shared<DepthImage>(MemoryType::kDevice);
 
-  /// Helper to keep track of which blocks need to be updated on the next calls
-  /// to updateMesh(), updateFreespace() upd updateEsdf() respectively.
+  /// Helper to keep track of which blocks need to be updated on the next
+  /// calls to updateMesh(), updateFreespace() upd updateEsdf() respectively.
   BlocksToUpdateTracker blocks_to_update_tracker_;
 
   /// Keeping track of the mesh blocks that got deleted in the mesh layer.
-  Index3DSet cleared_mesh_blocks_;
-
-  /// This object handles the bandwidth limiting of the mesh streamer.
-  MeshStreamerOldestBlocks mesh_streamer_;
-  float mesh_bandwidth_limit_mbps_ =
-      kMeshBandwidthLimitMbpsParamDesc.default_value;
+  Index3DSet cleared_blocks_;
 
   /// Whether to exclude the last depth frustum from the decay
   bool exclude_last_view_from_decay_ =

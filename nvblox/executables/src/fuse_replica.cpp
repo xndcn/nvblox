@@ -58,6 +58,6 @@ int main(int argc, char* argv[]) {
     LOG(INFO) << "Mesh location:" << fuser->mesh_output_path_;
   }
 
-  // Make sure the layers are the correct resolution.
+  // Run the fuser
   return fuser->run();
 }
