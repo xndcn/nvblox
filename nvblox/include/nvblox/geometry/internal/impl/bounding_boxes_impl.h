@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,6 +18,12 @@ limitations under the License.
 #include "nvblox/map/accessors.h"
 
 namespace nvblox {
+
+inline bool isBlockTouchedByBoundingBox(const Index3D& block_index,
+                                        float block_size,
+                                        const AxisAlignedBoundingBox& aabb_L) {
+  return aabb_L.intersects(getAABBOfBlock(block_size, block_index));
+}
 
 inline std::vector<Index3D> getBlockIndicesTouchedByBoundingBox(
     const float block_size, const AxisAlignedBoundingBox& aabb_L) {
@@ -64,7 +70,7 @@ std::vector<Index3D> getAllocatedBlocksWithinAABB(
     const BlockLayer<BlockType>& layer, const AxisAlignedBoundingBox& aabb) {
   std::vector<Index3D> allocated_blocks;
   for (const Index3D& idx : layer.getAllBlockIndices()) {
-    if (aabb.intersects(getAABBOfBlock(layer.block_size(), idx))) {
+    if (isBlockTouchedByBoundingBox(idx, layer.block_size(), aabb)) {
       allocated_blocks.push_back(idx);
     }
   }

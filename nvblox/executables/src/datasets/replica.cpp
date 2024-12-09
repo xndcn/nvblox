@@ -144,20 +144,22 @@ std::unique_ptr<ImageLoader<ColorImage>> createColorImageLoader(
 
 }  // namespace internal
 
-std::unique_ptr<Fuser> createFuser(const std::string base_path) {
+std::unique_ptr<Fuser> createFuser(const std::string base_path,
+                                   bool init_from_gflags) {
   auto data_loader = DataLoader::create(base_path, false);
   if (!data_loader) {
     return std::unique_ptr<Fuser>();
   }
-  return std::make_unique<Fuser>(std::move(data_loader));
+  return std::make_unique<Fuser>(std::move(data_loader), init_from_gflags);
 }
 
 DataLoader::DataLoader(const std::string& base_path, bool multithreaded)
-    : RgbdDataLoaderInterface(
-          replica::internal::createDepthImageLoader(
-              base_path, datasets::kDefaultUintDepthScaleFactor, multithreaded),
-          replica::internal::createColorImageLoader(base_path, multithreaded)),
+    : RgbdDataLoaderInterface(),
       base_path_(base_path),
+      depth_image_loader_(replica::internal::createDepthImageLoader(
+          base_path, datasets::kDefaultUintDepthScaleFactor, multithreaded)),
+      color_image_loader_(
+          replica::internal::createColorImageLoader(base_path, multithreaded)),
       trajectory_file_(
           std::ifstream(replica::internal::getPathForTrajectory(base_path))) {
   // We load the scale from camera file and reset the depth image loader to
@@ -275,6 +277,25 @@ DataLoadResult DataLoader::loadNext(DepthImage* depth_frame_ptr,
 
   timer_file_pose.Stop();
   return DataLoadResult::kSuccess;
+}
+
+DataLoadResult DataLoader::loadNext(DepthImage* depth_frame_ptr,
+                                    Transform* T_L_D_ptr,
+                                    Camera* depth_camera_ptr,
+                                    ColorImage* color_frame_ptr,
+                                    Transform* T_L_C_ptr,
+                                    Camera* color_camera_ptr) {
+  // NOTE: The other pointers are checked non-null below
+  CHECK_NOTNULL(color_frame_ptr);
+  CHECK_NOTNULL(T_L_C_ptr);
+  CHECK_NOTNULL(color_camera_ptr);
+  // For the replica dataset the depth and color cameras are the same, so just
+  // copying over.
+  auto result =
+      loadNext(depth_frame_ptr, T_L_D_ptr, depth_camera_ptr, color_frame_ptr);
+  *T_L_C_ptr = *T_L_D_ptr;
+  *color_camera_ptr = *depth_camera_ptr;
+  return result;
 }
 
 }  // namespace replica

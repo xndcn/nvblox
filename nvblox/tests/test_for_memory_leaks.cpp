@@ -40,6 +40,7 @@ std::pair<int, float> getFreeGPUMemory() {
 
 TEST(MemoryLeakTest, UnifiedVectorInt) {
   // Allocate a bunch of data
+  CudaStreamOwning cuda_stream;
   unified_vector<int> vec;
   constexpr int kNumTestingRounds = 10;
   constexpr int kMegaBytesPerRound = 100;
@@ -49,7 +50,7 @@ TEST(MemoryLeakTest, UnifiedVectorInt) {
   std::tie(start_free_gpu_memory_mb, std::ignore) = getFreeGPUMemory();
   for (int test_idx = 0; test_idx < kNumTestingRounds; test_idx++) {
     for (int i = 0; i < kNumVariablesToAddPerRound; i++) {
-      vec.push_back(i);
+      vec.push_back(i, cuda_stream);
     }
     test_utils::addOneToAllGPU(&vec);
     // Check (only on the final round)
@@ -58,7 +59,7 @@ TEST(MemoryLeakTest, UnifiedVectorInt) {
         EXPECT_EQ(vec[i], i + 1);
       }
     }
-    vec.clear();
+    vec.clearNoDeallocate();
     // Debug
     int free_gpu_memory_percent;
     std::tie(std::ignore, free_gpu_memory_percent) = getFreeGPUMemory();

@@ -15,10 +15,13 @@ limitations under the License.
 */
 #pragma once
 
+#include <optional>
+
 #include "nvblox/core/parameter_tree.h"
 #include "nvblox/core/time.h"
 #include "nvblox/core/types.h"
 #include "nvblox/integrators/freespace_integrator_params.h"
+#include "nvblox/integrators/viewpoint.h"
 #include "nvblox/map/blox.h"
 #include "nvblox/map/common_names.h"
 #include "nvblox/map/layer.h"
@@ -44,8 +47,23 @@ class FreespaceIntegrator {
   /// @param tsdf_layer The tsdf layer that is used to check wether voxels
   /// are occupied or not.
   /// @param freespace_layer_ptr The freespace layer that will be updated.
+  //   void updateFreespaceLayer(const std::vector<Index3D>&
+  //   block_indices_to_update,
+  //                             Time update_time_ms, const TsdfLayer&
+  //                             tsdf_layer, FreespaceLayer*
+  //                             freespace_layer_ptr);
+
+  /// @brief Updates a freespace layer according to a tsdf layer (in view).
+  /// @param block_indices_to_update The block indices that should be updated.
+  /// @param update_time_ms  The current time in miliseconds.
+  /// @param tsdf_layer The tsdf layer that is used to check wether voxels
+  /// are occupied or not.
+  /// @param view_to_update Describes the view of the scene in which voxels
+  /// should be updated.
+  /// @param freespace_layer_ptr The freespace layer that will be updated.
   void updateFreespaceLayer(const std::vector<Index3D>& block_indices_to_update,
                             Time update_time_ms, const TsdfLayer& tsdf_layer,
+                            const std::optional<ViewBasedInclusionData>& view,
                             FreespaceLayer* freespace_layer_ptr);
 
   /// A parameter getter
@@ -114,6 +132,17 @@ class FreespaceIntegrator {
       const std::string& name_remap = std::string()) const;
 
  protected:
+  // Use the non-padded kernel for performance gains when check_neighborhood is
+  // disabled
+  void launchNonPaddedKernel(Time update_time_ms, const TsdfLayer& tsdf_layer,
+                             const std::optional<ViewBasedInclusionData>& view,
+                             FreespaceLayer* freespace_layer_ptr);
+
+  // Use the padded kernel when check_neighborhood is enabled.
+  void launchPaddedKernel(Time update_time_ms, const TsdfLayer& tsdf_layer,
+                          const std::optional<ViewBasedInclusionData>& view,
+                          FreespaceLayer* freespace_layer_ptr);
+
   // Parameters (see getters for description)
   // Note: See comment behind each parameter for corresponding dynablox
   // parameter name
@@ -131,7 +160,6 @@ class FreespaceIntegrator {
 
   // Time
   Time last_update_time_ms_{0};
-  Time current_update_time_ms_{0};
 
   // Block index buffers
   host_vector<Index3D> block_indices_to_update_host_;

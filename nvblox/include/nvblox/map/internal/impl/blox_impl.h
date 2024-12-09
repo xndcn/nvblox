@@ -43,6 +43,38 @@ void VoxelBlock<VoxelType>::initAsync(VoxelBlock<VoxelType>* block_ptr,
   }
 }
 
+template <typename VoxelType>
+const VoxelType& VoxelBlock<VoxelType>::operator()(const Index3D& idx) const {
+  return voxels[idx.x()][idx.y()][idx.z()];
+}
+
+template <typename VoxelType>
+VoxelType& VoxelBlock<VoxelType>::operator()(const Index3D& idx) {
+  return voxels[idx.x()][idx.y()][idx.z()];
+}
+
+template <typename VoxelType>
+typename VoxelBlock<VoxelType>::iterator VoxelBlock<VoxelType>::begin() {
+  return iterator(&voxels[0][0][0]);
+}
+
+template <typename VoxelType>
+typename VoxelBlock<VoxelType>::const_iterator VoxelBlock<VoxelType>::cbegin()
+    const {
+  return const_iterator(&voxels[0][0][0]);
+}
+
+template <typename VoxelType>
+typename VoxelBlock<VoxelType>::iterator VoxelBlock<VoxelType>::end() {
+  return iterator(&voxels[0][0][0] + kNumVoxels);
+}
+
+template <typename VoxelType>
+typename VoxelBlock<VoxelType>::const_iterator VoxelBlock<VoxelType>::cend()
+    const {
+  return const_iterator(&voxels[0][0][0] + kNumVoxels);
+}
+
 // Initialization specialization for ColorVoxel which is initialized to gray
 // with zero weight
 template <>
@@ -61,6 +93,11 @@ void setBlockBytesZeroOnGPUAsync(BlockType* block_device_ptr,
                                  const CudaStream& cuda_stream) {
   checkCudaErrors(
       cudaMemsetAsync(block_device_ptr, 0, sizeof(BlockType), cuda_stream));
+}
+
+template <typename VoxelType>
+constexpr size_t sizeInBytes(const VoxelBlock<VoxelType>*) {
+  return sizeof(VoxelBlock<VoxelType>);
 }
 
 }  // namespace nvblox

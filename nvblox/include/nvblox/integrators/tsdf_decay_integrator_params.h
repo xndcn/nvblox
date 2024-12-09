@@ -37,4 +37,12 @@ constexpr Param<float>::Description kTsdfDecayedFreeDistanceVoxDesc{
     "The distance in voxels that we give to fully decayed voxels "
     "(if requested)."};
 
+struct TsdfDecayIntegratorParams {
+  Param<float> tsdf_decay_factor{kTsdfDecayFactorParamDesc};
+  Param<float> tsdf_decayed_weight_threshold{kTsdfDecayedWeightThresholdDesc};
+  Param<bool> tsdf_set_free_distance_on_decayed{
+      kTsdfSetFreeDistanceOnDecayedDesc};
+  Param<float> tsdf_decayed_free_distance_vox{kTsdfDecayedFreeDistanceVoxDesc};
+};
+
 }  // namespace nvblox

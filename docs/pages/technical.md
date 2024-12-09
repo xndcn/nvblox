@@ -17,7 +17,7 @@ _Outputs_:
 
 The figure below shows a simple system utilizing nvblox for path planning.
 
-![System Diagram](images/system_diagram.png)
+![System Diagram](../images/system_diagram.png)
 
 ## (Brief) Technical Details
 

@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,7 +20,9 @@ limitations under the License.
 namespace nvblox {
 namespace timing {
 
-void Ticker::tick(int64_t timestamp_ns) { circular_buffer_.push(timestamp_ns); }
+void Ticker::tick(GetTimestampFunctor get_timestamp_ns_functor) {
+  circular_buffer_.push(get_timestamp_ns_functor());
+}
 
 float Ticker::getMeanRateHz() const {
   if (circular_buffer_.empty()) {
@@ -39,13 +41,13 @@ float Ticker::getMeanRateHz() const {
 
 int Ticker::getNumSamples() const { return circular_buffer_.size(); }
 
-void ChronoTicker::tick() {
+int64_t GetChronoTimestampFunctor::operator()() const {
   const std::chrono::time_point<std::chrono::system_clock> now =
       std::chrono::system_clock::now();
   auto duration = now.time_since_epoch();
   auto timestamp_ns =
       std::chrono::duration_cast<std::chrono::nanoseconds>(duration);
-  this->Ticker::tick(timestamp_ns.count());
+  return timestamp_ns.count();
 }
 
 Rates& Rates::getInstance() {
@@ -53,7 +55,7 @@ Rates& Rates::getInstance() {
   return rates;
 }
 
-ChronoTicker& Rates::getTicker(const std::string& tag) {
+Ticker& Rates::getTicker(const std::string& tag) {
   std::lock_guard<std::mutex> lock(getInstance().mutex_);
   TickerMap& tickers = getInstance().tickers_;
   auto it = tickers.find(tag);
@@ -63,7 +65,7 @@ ChronoTicker& Rates::getTicker(const std::string& tag) {
   } else {
     // This tag hasn't been ticked before. Let's create it, and return the new
     // ticker.
-    auto insert_status = tickers.emplace(tag, ChronoTicker());
+    auto insert_status = tickers.emplace(tag, Ticker());
     getInstance().max_tag_length_ =
         std::max(getInstance().max_tag_length_, tag.size());
     return insert_status.first->second;
@@ -71,16 +73,21 @@ ChronoTicker& Rates::getTicker(const std::string& tag) {
 }
 
 void Rates::tick(const std::string& tag) {
-  ChronoTicker& ticker = getInstance().getTicker(tag);
+  Ticker& ticker = getInstance().getTicker(tag);
   std::lock_guard<std::mutex> lock(getInstance().mutex_);
-  ticker.tick();
+  ticker.tick(getInstance().get_timestamp_ns_functor_);
+}
+
+void Rates::setGetTimestampFunctor(
+    GetTimestampFunctor get_timestamp_ns_functor) {
+  getInstance().get_timestamp_ns_functor_ = get_timestamp_ns_functor;
 }
 
 float Rates::getMeanRateHz(const std::string& tag) {
   if (!getInstance().exists(tag)) {
     return 0.0f;
   }
-  const ChronoTicker& ticker = getInstance().getTicker(tag);
+  const Ticker& ticker = getInstance().getTicker(tag);
   std::lock_guard<std::mutex> lock(getInstance().mutex_);
   return ticker.getMeanRateHz();
 }
@@ -118,7 +125,7 @@ void Rates::Print(std::ostream& out) {
     out << ticker_name << "\t";
     out.width(7);
 
-    const ChronoTicker& ticker = tag_ticker_pair.second;
+    const Ticker& ticker = tag_ticker_pair.second;
     const int num_samples = ticker.getNumSamples();
     out << num_samples << "\t";
     if (num_samples > 0) {

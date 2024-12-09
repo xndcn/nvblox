@@ -56,6 +56,7 @@ namespace primitives {
 class Primitive {
  public:
   enum class Type { kPlane, kCube, kSphere, kCylinder };
+  static std::string toString(const Type& type);
 
   /// Epsilon for ray intersection and computation.
   static constexpr float kEpsilon = 1e-4;

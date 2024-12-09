@@ -24,10 +24,10 @@ limitations under the License.
 
 namespace nvblox {
 
-std::shared_ptr<const SerializedMesh> MeshSerializerGpu::serializeMesh(
+std::shared_ptr<const SerializedMeshLayer> MeshSerializerGpu::serialize(
     const MeshLayer& mesh_layer,
     const std::vector<Index3D>& block_indices_to_serialize,
-    const CudaStream cuda_stream) {
+    const CudaStream& cuda_stream) {
   vertex_serializer_.serializeAsync(
       mesh_layer, block_indices_to_serialize, serialized_mesh_->vertices,
       serialized_mesh_->vertex_block_offsets,
@@ -65,6 +65,6 @@ std::shared_ptr<const SerializedMesh> MeshSerializerGpu::serializeMesh(
 }
 
 MeshSerializerGpu::MeshSerializerGpu()
-    : serialized_mesh_(std::make_shared<SerializedMesh>()) {}
+    : serialized_mesh_(std::make_shared<SerializedMeshLayer>()) {}
 
 }  // namespace nvblox

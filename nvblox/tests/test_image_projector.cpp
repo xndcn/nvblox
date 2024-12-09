@@ -84,7 +84,8 @@ TEST(ImageProjectorTest, BackProjection) {
   image_back_projector.backProjectOnGPU(depth_image, camera, &pointcloud_C);
 
   // Get points back to the CPU
-  const std::vector<Vector3f> points_C = pointcloud_C.points().toVector();
+  const std::vector<Vector3f> points_C =
+      pointcloud_C.points().toVectorAsync(CudaStreamOwning());
 
   // Transform points (on the CPU)
   std::vector<Vector3f> points_L;

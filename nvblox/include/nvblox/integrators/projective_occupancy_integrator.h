@@ -47,8 +47,9 @@ class ProjectiveOccupancyIntegrator
   /// be intergrated.
   /// @param updated_blocks Optional pointer to a vector which will contain
   /// the 3D indices of blocks affected by the integration.
-  void integrateFrame(const DepthImage& depth_frame, const Transform& T_L_C,
-                      const Camera& camera, OccupancyLayer* layer,
+  void integrateFrame(const MaskedDepthImageConstView& depth_frame,
+                      const Transform& T_L_C, const Camera& camera,
+                      OccupancyLayer* layer,
                       std::vector<Index3D>* updated_blocks = nullptr);
 
   /// Integrates a depth image in to the passed occupancy layer.
@@ -60,8 +61,9 @@ class ProjectiveOccupancyIntegrator
   /// intergrated.
   /// @param updated_blocks Optional pointer to a vector which will contain
   /// the 3D indices of blocks affected by the integration.
-  void integrateFrame(const DepthImage& depth_frame, const Transform& T_L_C,
-                      const Lidar& lidar, OccupancyLayer* layer,
+  void integrateFrame(const MaskedDepthImageConstView& depth_frame,
+                      const Transform& T_L_C, const Lidar& lidar,
+                      OccupancyLayer* layer,
                       std::vector<Index3D>* updated_blocks = nullptr);
 
   /// A parameter getter

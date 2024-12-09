@@ -24,10 +24,10 @@
 set -euxo pipefail
 
 # Make sure that the expected version of nsys is used
-NSYS=/usr/local/cuda/bin/nsys
+NSYS=/usr/local/bin/nsys
 
 # Command to benchmark. We run a fixed number of iterations for to make it reproducable
-BENCHMARK_CMD="../tests/benchmark --benchmark_filter=benchmarkAll/iterations:100"
+BENCHMARK_CMD="../tests/nvblox_benchmark --benchmark_filter=benchmarkAll/iterations:100"
 
 # Name of nsys profile output files
 REPORT_NAME="profile_report"

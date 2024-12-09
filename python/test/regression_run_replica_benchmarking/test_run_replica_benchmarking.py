@@ -28,7 +28,7 @@ DATASET_PATH = "nvblox/tests/data/replica/office0"
 BASELINE_KPI_PATH = "python/test/regression_run_replica_benchmarking/baseline_kpi.json"
 
 # Binary path to fuser
-FUSE_REPLICA_BINARY_PATH = "nvblox/build/executables/fuse_replica"
+FUSE_REPLICA_BINARY_PATH = "build/nvblox/executables/fuse_replica"
 
 
 def read_json(path):

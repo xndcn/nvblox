@@ -92,17 +92,41 @@ struct IdentityFunctor {
   }
 };
 
+int robustFloor(float float_val) {
+  // Function to prevent flooring integer numbers stored as
+  // floating variable to the next lower integer due to rounding errors.
+  constexpr float kMaxDiffToRound = 1e-4;
+  int nearest_int = static_cast<int>(std::round(float_val));
+  // Round to the nearest integer if closer than kMaxDiffToRound,
+  // otherwise floor to the next lower integer.
+  if (std::abs(float_val - nearest_int) < kMaxDiffToRound) {
+    return nearest_int;
+  } else {
+    return static_cast<int>(std::floor(float_val));
+  }
+}
+
+Index3D robustFloor(const Vector3f& float_vec) {
+  Index3D int_vec;
+  for (int i = 0; i < float_vec.size(); ++i) {
+    int_vec[i] = robustFloor(float_vec[i]);
+  }
+  return int_vec;
+}
+
 template <typename InputVoxelType, typename OutputCellType,
           typename ConversionFunctor>
 void voxelLayerToDenseVoxelGridInAABBAsync(
     const VoxelBlockLayer<InputVoxelType>& layer,
     const AxisAlignedBoundingBox& aabb, const OutputCellType default_value,
     const ConversionFunctor& conversion_op, Unified3DGrid<OutputCellType>* grid,
-    CudaStream cuda_stream) {
+    const CudaStream& cuda_stream) {
   // Size of the output grid
   const float inv_voxel_size = 1.0f / layer.voxel_size();
-  const Index3D min_in_vox = (aabb.min() * inv_voxel_size).cast<int>();
-  const Index3D max_in_vox = (aabb.max() * inv_voxel_size).cast<int>();
+  // NOTE: robustFloor aims to prevent flooring integer numbers stored as
+  // floating variable to the next lower integer due to rounding errors.
+  const Index3D min_in_vox = robustFloor(aabb.min() * inv_voxel_size);
+  const Index3D max_in_vox = robustFloor(aabb.max() * inv_voxel_size);
   const Index3D dims_in_vox = max_in_vox - min_in_vox + Index3D::Ones();
   CHECK((dims_in_vox.array() > 0).all());
   grid->setAABBAsync(min_in_vox, dims_in_vox, cuda_stream);
@@ -121,8 +145,8 @@ void voxelLayerToDenseVoxelGridInAABBAsync(
                               static_cast<unsigned int>(dims_in_blox.z())};
   const dim3 kThreadsPerBlock(kVoxelsPerSide, kVoxelsPerSide, kVoxelsPerSide);
   extractValuesToGrid<<<thread_blocks, kThreadsPerBlock, 0, cuda_stream>>>(
-      layer.getGpuLayerView().getHash().impl_, min_block_idx, default_value,
-      conversion_op, grid->getGPUView());
+      layer.getGpuLayerView(cuda_stream).getHash().impl_, min_block_idx,
+      default_value, conversion_op, grid->getGPUView());
 }
 
 template <typename VoxelType>
@@ -131,7 +155,7 @@ void voxelLayerToDenseVoxelGridInAABBAsync(
     const AxisAlignedBoundingBox& aabb,       // NOLINT
     const VoxelType default_value,            // NOLINT
     Unified3DGrid<VoxelType>* grid,           // NOLINT
-    CudaStream cuda_stream) {
+    const CudaStream& cuda_stream) {
   // Pass through to conversion function with identity
   IdentityFunctor<VoxelType> conversion_op;
   voxelLayerToDenseVoxelGridInAABBAsync(layer, aabb, default_value,

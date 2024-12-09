@@ -210,13 +210,54 @@ ImageMasker::ImageMasker()
 ImageMasker::ImageMasker(std::shared_ptr<CudaStream> cuda_stream)
     : cuda_stream_(cuda_stream) {}
 
-void ImageMasker::splitImageOnGPU(const ColorImage& input,
-                                  const MonoImage& mask,
-                                  ColorImage* unmasked_output,
-                                  ColorImage* masked_output,
-                                  ColorImage* masked_color_overlay) {
-  allocateOutput(input, unmasked_output, masked_output, masked_color_overlay);
+template <typename ImageType>
+static void allocateOutput(const ImageType& input, ImageType* unmasked_output,
+                           ImageType* masked_output,
+                           ColorImage* overlay_output) {
+  CHECK_NOTNULL(unmasked_output);
+  CHECK_NOTNULL(masked_output);
+  CHECK_GT(input.rows(), 0);
+  CHECK_GT(input.cols(), 0);
+
+  // Allocate output images if required
+  if ((input.rows() != unmasked_output->rows()) ||
+      (input.cols() != unmasked_output->cols())) {
+    LOG(INFO) << "Allocating image for unmasked output";
+    *unmasked_output =
+        ImageType(input.rows(), input.cols(), input.memory_type());
+  }
+  if ((input.rows() != masked_output->rows()) ||
+      (input.cols() != masked_output->cols())) {
+    LOG(INFO) << "Allocating image for masked output";
+    *masked_output = ImageType(input.rows(), input.cols(), input.memory_type());
+  }
+  if (overlay_output) {
+    if ((input.rows() != overlay_output->rows()) ||
+        (input.cols() != overlay_output->cols())) {
+      LOG(INFO) << "Allocating image for overlay output";
+      *overlay_output =
+          ColorImage(input.rows(), input.cols(), input.memory_type());
+    }
+    CHECK((input.rows() == overlay_output->rows()) &&
+          (input.cols() == overlay_output->cols()));
+  }
+
+  CHECK((input.rows() == unmasked_output->rows()) &&
+        (input.cols() == unmasked_output->cols()));
+  CHECK((input.rows() == masked_output->rows()) &&
+        (input.cols() == masked_output->cols()));
+}
+
+template <typename ElementType>
+static void splitImageOnGPUTemplate(
+    const Image<ElementType>& input, const MonoImage& mask,
+    Image<ElementType>* unmasked_output, Image<ElementType>* masked_output,
+    const ElementType masked_image_invalid_pixel,
+    const ElementType unmasked_image_invalid_pixel,
+    ColorImage* masked_color_overlay, const CudaStream& cuda_stream) {
   CHECK((input.rows() == mask.rows()) && (input.cols() == mask.cols()));
+
+  allocateOutput(input, unmasked_output, masked_output, masked_color_overlay);
 
   // Kernel
   // Call params
@@ -227,19 +268,32 @@ void ImageMasker::splitImageOnGPU(const ColorImage& input,
   const dim3 num_blocks(input.cols() / kThreadsPerThreadBlock.x + 1,  // NOLINT
                         input.rows() / kThreadsPerThreadBlock.y + 1,  // NOLINT
                         1);
+
   splitColorImageKernel<<<num_blocks, kThreadsPerThreadBlock, 0,
-                          *cuda_stream_>>>(
+                          cuda_stream>>>(
       input.dataConstPtr(),                      // NOLINT
       mask.dataConstPtr(),                       // NOLINT
       input.rows(),                              // NOLINT
       input.cols(),                              // NOLINT
-      color_masked_image_invalid_pixel_,         // NOLINT
-      color_unmasked_image_invalid_pixel_,       // NOLINT
+      masked_image_invalid_pixel,                // NOLINT
+      unmasked_image_invalid_pixel,              // NOLINT
       unmasked_output->dataPtr(),                // NOLINT
       masked_output->dataPtr(),                  // NOLINT
       getOverlayDataPtr(masked_color_overlay));  // NOLINT
-  cuda_stream_->synchronize();
+
+  cuda_stream.synchronize();
   checkCudaErrors(cudaPeekAtLastError());
+}
+
+void ImageMasker::splitImageOnGPU(const ColorImage& color_input,
+                                  const MonoImage& mask,
+                                  ColorImage* unmasked_color_output,
+                                  ColorImage* masked_color_output,
+                                  ColorImage* masked_color_overlay) {
+  splitImageOnGPUTemplate(
+      color_input, mask, unmasked_color_output, masked_color_output,
+      color_masked_image_invalid_pixel_, color_unmasked_image_invalid_pixel_,
+      masked_color_overlay, *cuda_stream_);
 }
 
 void ImageMasker::splitImageOnGPU(
@@ -247,7 +301,7 @@ void ImageMasker::splitImageOnGPU(
     const Transform& T_CM_CD, const Camera& depth_camera,
     const Camera& mask_camera, DepthImage* unmasked_depth_output,
     DepthImage* masked_depth_output, ColorImage* masked_depth_overlay) {
-  timing::Timer image_masking_timer("image_masker/split_depth_image\n");
+  timing::Timer image_masking_timer("image_masker/split_depth_image");
 
   // First check if images and cameras have the same dimensions and are not
   // empty (depth_input is checked in allocateOutput)
@@ -317,45 +371,6 @@ void ImageMasker::splitImageOnGPU(
   cuda_stream_->synchronize();
   checkCudaErrors(cudaPeekAtLastError());
   image_masking_timer.Stop();
-}
-
-template <typename ImageType>
-void ImageMasker::allocateOutput(const ImageType& input,
-                                 ImageType* unmasked_output,
-                                 ImageType* masked_output,
-                                 ColorImage* overlay_output) {
-  CHECK_NOTNULL(unmasked_output);
-  CHECK_NOTNULL(masked_output);
-  CHECK_GT(input.rows(), 0);
-  CHECK_GT(input.cols(), 0);
-
-  // Allocate output images if required
-  if ((input.rows() != unmasked_output->rows()) ||
-      (input.cols() != unmasked_output->cols())) {
-    LOG(INFO) << "Allocating image for unmasked output";
-    *unmasked_output =
-        ImageType(input.rows(), input.cols(), input.memory_type());
-  }
-  if ((input.rows() != masked_output->rows()) ||
-      (input.cols() != masked_output->cols())) {
-    LOG(INFO) << "Allocating image for masked output";
-    *masked_output = ImageType(input.rows(), input.cols(), input.memory_type());
-  }
-  if (overlay_output) {
-    if ((input.rows() != overlay_output->rows()) ||
-        (input.cols() != overlay_output->cols())) {
-      LOG(INFO) << "Allocating image for overlay output";
-      *overlay_output =
-          ColorImage(input.rows(), input.cols(), input.memory_type());
-    }
-    CHECK((input.rows() == overlay_output->rows()) &&
-          (input.cols() == overlay_output->cols()));
-  }
-
-  CHECK((input.rows() == unmasked_output->rows()) &&
-        (input.cols() == unmasked_output->cols()));
-  CHECK((input.rows() == masked_output->rows()) &&
-        (input.cols() == masked_output->cols()));
 }
 
 float ImageMasker::occlusion_threshold_m() const {

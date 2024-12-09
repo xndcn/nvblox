@@ -61,9 +61,9 @@ struct MapperTestBlocksInLayers : public testing::Test {
     scene_.addPlaneBoundaries(-4.0f, 4.0f, -4.0f, 4.0f);
 
     // Setup the slice bounds to include the sphere.
-    mapper_.esdf_slice_min_height(-3.0f);
-    mapper_.esdf_slice_max_height(3.0f);
-    mapper_.esdf_slice_height(0.0f);
+    mapper_.esdf_integrator().esdf_slice_min_height(-3.0f);
+    mapper_.esdf_integrator().esdf_slice_max_height(3.0f);
+    mapper_.esdf_integrator().esdf_slice_height(0.0f);
   }
 
   /// @brief Load the projective layer from the scene and then update all the
@@ -154,15 +154,21 @@ struct MapperTestBlocksInLayers : public testing::Test {
       const float block_size = mapper_.esdf_layer().block_size();
       const int output_slice_block_index_z =
           getBlockIndexFromPositionInLayer(
-              block_size, Vector3f(0.0f, 0.0f, mapper_.esdf_slice_height()))
+              block_size,
+              Vector3f(0.0f, 0.0f,
+                       mapper_.esdf_integrator().esdf_slice_height()))
               .z();
       const int min_input_block_index_z =
           getBlockIndexFromPositionInLayer(
-              block_size, Vector3f(0.0f, 0.0f, mapper_.esdf_slice_min_height()))
+              block_size,
+              Vector3f(0.0f, 0.0f,
+                       mapper_.esdf_integrator().esdf_slice_min_height()))
               .z();
       const int max_input_block_index_z =
           getBlockIndexFromPositionInLayer(
-              block_size, Vector3f(0.0f, 0.0f, mapper_.esdf_slice_max_height()))
+              block_size,
+              Vector3f(0.0f, 0.0f,
+                       mapper_.esdf_integrator().esdf_slice_max_height()))
               .z();
 
       // Test that for every 3d projective block inside the slice bounds there

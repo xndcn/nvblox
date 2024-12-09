@@ -75,27 +75,29 @@ __global__ void getVoxelsAtPositionsKernel(
 void getVoxelsAtPositionsOnGPU(const GPULayerView<TsdfBlock>& gpu_layer,
                                const std::vector<Vector3f>& p_L_vec,
                                host_vector<TsdfVoxel>* host_voxels,
-                               host_vector<bool>* host_flags) {
+                               host_vector<bool>* host_flags,
+                               const float block_size) {
   // CPU -> GPU
   device_vector<Vector3f> device_positions;
-  device_positions.copyFrom(p_L_vec);
+  device_positions.copyFromAsync(p_L_vec, CudaStreamOwning());
 
   // Output space
   device_vector<TsdfVoxel> device_voxels(device_positions.size());
   device_vector<bool> device_flags(device_positions.size());
+  device_voxels.setZeroAsync(CudaStreamOwning());
+  device_flags.setZeroAsync(CudaStreamOwning());
 
   // Kernel
   constexpr int kNumThreadsPerBlock = 32;
   const int num_blocks = device_positions.size() / kNumThreadsPerBlock + 1;
   getVoxelsAtPositionsKernel<<<num_blocks, kNumThreadsPerBlock>>>(
-      gpu_layer.getHash().impl_, device_positions.data(),
-      gpu_layer.block_size(), device_positions.size(), device_voxels.data(),
-      device_flags.data());
+      gpu_layer.getHash().impl_, device_positions.data(), block_size,
+      device_positions.size(), device_voxels.data(), device_flags.data());
   checkCudaErrors(cudaPeekAtLastError());
 
   // GPU -> CPU
-  host_voxels->copyFrom(device_voxels);
-  host_flags->copyFrom(device_flags);
+  host_voxels->copyFromAsync(device_voxels, CudaStreamOwning());
+  host_flags->copyFromAsync(device_flags, CudaStreamOwning());
 }
 
 }  // namespace test_utils

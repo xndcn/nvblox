@@ -29,5 +29,38 @@ constexpr Param<float>::Description kEsdfIntegratorMaxSiteDistanceVoxParamDesc{
     "esdf_integrator_max_site_distance_vox", 1.f,
     "Maximum distance to consider a voxel within a surface for the ESDF "
     "calculation."};
+constexpr Param<float>::Description kEsdfSliceMinHeightParamDesc{
+    "esdf_slice_min_height", 0.f,
+    "The minimum height, in meters, to consider obstacles part of the 2D "
+    "ESDF slice."};
+constexpr Param<float>::Description kEsdfSliceMaxHeightParamDesc{
+    "esdf_slice_max_height", 1.f,
+    "The maximum height, in meters, to consider obstacles part of the 2D "
+    "ESDF slice."};
+constexpr Param<float>::Description kEsdfSliceHeightParamDesc{
+    "esdf_slice_height", 1.f,
+    "The output slice height for the distance slice and ESDF pointcloud. "
+    "Does not need to be within min and max height below. In units of "
+    "meters."};
+constexpr Param<float>::Description kSliceHeightAbovePlaneMParamDesc{
+    "slice_height_above_plane_m", 0.0,
+    "The height above the ground plane in meters at which we start "
+    "slicing (from below)."};
+constexpr Param<float>::Description kSliceHeightThicknessMParamDesc{
+    "slice_height_thickness_m", 0.1,
+    "The height of the slice (in meters) above the lower slice."};
+
+struct EsdfIntegratorParams {
+  Param<float> esdf_integrator_max_distance_m{
+      kEsdfIntegratorMaxDistanceMParamDesc};
+  Param<float> esdf_integrator_min_weight{kEsdfIntegratorMinWeightParamDesc};
+  Param<float> esdf_integrator_max_site_distance_vox{
+      kEsdfIntegratorMaxSiteDistanceVoxParamDesc};
+  Param<float> esdf_slice_min_height{kEsdfSliceMinHeightParamDesc};
+  Param<float> esdf_slice_max_height{kEsdfSliceMaxHeightParamDesc};
+  Param<float> esdf_slice_height{kEsdfSliceHeightParamDesc};
+  Param<float> slice_height_above_plane_m{kSliceHeightAbovePlaneMParamDesc};
+  Param<float> slice_height_thickness_m{kSliceHeightThicknessMParamDesc};
+};
 
 }  // namespace nvblox

@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "nvblox/core/types.h"
 #include "nvblox/map/layer.h"
+#include "nvblox/serialization/layer_streamer.h"
 
 namespace nvblox {
 
@@ -58,7 +59,7 @@ class LayerCake {
   /// @param type_index The type index of the added layer.
   /// @param layer A (base class) pointer to the added layer.
   inline void insert(const std::type_index& type_index,
-                     std::unique_ptr<BaseLayer>&& layer);
+                     std::shared_ptr<BaseLayer>&& layer);
 
   /// Get a layer by type.
   /// @tparam LayerType The type of the layer to get.
@@ -77,6 +78,15 @@ class LayerCake {
   /// @return A reference to the layer in the cake.
   template <typename LayerType>
   const LayerType& get() const;
+
+  /// Get a layer by type.
+  /// @tparam LayerType The type of the layer to get.
+  /// @return A shared pointer to the layer in the cake, or an empty
+  /// shared_ptr if no layer of this type exists in the cake.
+  template <typename LayerType>
+  std::shared_ptr<LayerType> getSharedPtr();
+  template <typename LayerType>
+  std::shared_ptr<const LayerType> getConstSharedPtr() const;
 
   /// Check if a layer of the specified type exists in the cake.
   /// @tparam LayerType The type of the layer.
@@ -105,7 +115,7 @@ class LayerCake {
 
   /// Retrieve all layers in the cake by reference.
   /// @return A map containing the layers.
-  const std::unordered_map<std::type_index, std::unique_ptr<BaseLayer>>&
+  const std::unordered_map<std::type_index, std::shared_ptr<BaseLayer>>&
   get_layers() const {
     return layers_;
   }
@@ -120,13 +130,17 @@ class LayerCake {
   }
 
  private:
+  /// Create a layer streamer in the cake.
+  template <typename LayerType>
+  void addStreamer();
+
   /// The voxel size of contained layers.
   float voxel_size_ = 0.0f;
 
   /// Stored layers
   /// Note(alexmillane): Currently we restrict the cake to storing a single
   /// layer of each type.
-  std::unordered_map<std::type_index, std::unique_ptr<BaseLayer>> layers_;
+  std::unordered_map<std::type_index, std::shared_ptr<BaseLayer>> layers_;
 };
 
 }  // namespace nvblox

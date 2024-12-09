@@ -345,8 +345,8 @@ bool SphereTracer::castOnGPU(const Ray& ray, const TsdfLayer& tsdf_layer,
   CHECK_NEAR(ray.direction().norm(), 1.0, eps);
 
   // Get the GPU hash
-  GPULayerView<TsdfBlock> gpu_layer_view =
-      tsdf_layer.getGpuLayerViewAsync(*cuda_stream_);
+  GPULayerView<TsdfBlock>& gpu_layer_view =
+      tsdf_layer.getGpuLayerView(*cuda_stream_);
 
   // Allocate space
   float* t_device;
@@ -363,7 +363,7 @@ bool SphereTracer::castOnGPU(const Ray& ray, const TsdfLayer& tsdf_layer,
       t_device,                        // NOLINT
       success_flag_device,             // NOLINT
       truncation_distance_m,           // NOLINT
-      gpu_layer_view.block_size(),     // NOLINT
+      tsdf_layer.block_size(),         // NOLINT
       maximum_steps_,                  // NOLINT
       maximum_ray_length_m_,           // NOLINT
       surface_distance_epsilon_m);
@@ -451,8 +451,8 @@ void SphereTracer::renderImageOnGPU(const Camera& camera,
   // Get the GPU hash
   timing::Timer hash_transfer_timer(
       "color/integrate/sphere_trace/hash_transfer");
-  GPULayerView<TsdfBlock> gpu_layer_view =
-      tsdf_layer.getGpuLayerViewAsync(*cuda_stream_);
+  GPULayerView<TsdfBlock>& gpu_layer_view =
+      tsdf_layer.getGpuLayerView(*cuda_stream_);
   hash_transfer_timer.Stop();
 
   // Get metric surface distance epsilon
@@ -476,7 +476,7 @@ void SphereTracer::renderImageOnGPU(const Camera& camera,
       gpu_layer_view.getHash().impl_,  // NOLINT
       depth_ptr->dataPtr(),            // NOLINT
       truncation_distance_m,           // NOLINT
-      gpu_layer_view.block_size(),     // NOLINT
+      tsdf_layer.block_size(),         // NOLINT
       maximum_steps_,                  // NOLINT
       maximum_ray_length_m_,           // NOLINT
       surface_distance_epsilon_m,      // NOLINT
@@ -516,10 +516,10 @@ void SphereTracer::renderRgbdImageOnGPU(
   // Get the GPU hash
   timing::Timer hash_transfer_timer(
       "color/integrate/sphere_trace/hash_transfer");
-  GPULayerView<TsdfBlock> tsdf_gpu_layer_view =
-      tsdf_layer.getGpuLayerViewAsync(*cuda_stream_);
-  GPULayerView<ColorBlock> color_gpu_layer_view =
-      color_layer.getGpuLayerViewAsync(*cuda_stream_);
+  GPULayerView<TsdfBlock>& tsdf_gpu_layer_view =
+      tsdf_layer.getGpuLayerView(*cuda_stream_);
+  GPULayerView<ColorBlock>& color_gpu_layer_view =
+      color_layer.getGpuLayerView(*cuda_stream_);
   hash_transfer_timer.Stop();
 
   // Get metric surface distance epsilon
@@ -544,7 +544,7 @@ void SphereTracer::renderRgbdImageOnGPU(
       depth_ptr->dataPtr(),                  // NOLINT
       color_ptr->dataPtr(),                  // NOLINT
       truncation_distance_m,                 // NOLINT
-      tsdf_gpu_layer_view.block_size(),      // NOLINT
+      tsdf_layer.block_size(),               // NOLINT
       maximum_steps_,                        // NOLINT
       maximum_ray_length_m_,                 // NOLINT
       surface_distance_epsilon_m,            // NOLINT
@@ -604,13 +604,13 @@ std::pair<device_vector<Vector3f>, device_vector<bool>> SphereTracer::castOnGPU(
   // Output space
   device_vector<Vector3f> intersection_points_L(rays_L.size());
   device_vector<bool> success_flags(rays_L.size());
-  success_flags.setZero();
+  success_flags.setZeroAsync(*cuda_stream_);
 
   // Get the GPU hash
   timing::Timer hash_transfer_timer(
       "color/integrate/sphere_trace/hash_transfer");
-  GPULayerView<TsdfBlock> gpu_layer_view =
-      tsdf_layer.getGpuLayerViewAsync(*cuda_stream_);
+  GPULayerView<TsdfBlock>& gpu_layer_view =
+      tsdf_layer.getGpuLayerView(*cuda_stream_);
   hash_transfer_timer.Stop();
 
   // Get metric surface distance epsilon
@@ -632,7 +632,7 @@ std::pair<device_vector<Vector3f>, device_vector<bool>> SphereTracer::castOnGPU(
       intersection_points_L.data(),    // NOLINT
       success_flags.data(),            // NOLINT
       truncation_distance_m,           // NOLINT
-      gpu_layer_view.block_size(),     // NOLINT
+      tsdf_layer.block_size(),         // NOLINT
       maximum_steps_,                  // NOLINT
       maximum_ray_length_m_,           // NOLINT
       surface_distance_epsilon_m);

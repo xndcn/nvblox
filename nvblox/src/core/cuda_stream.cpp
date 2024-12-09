@@ -22,18 +22,38 @@ limitations under the License.
 
 namespace nvblox {
 
-void CudaStream::synchronize() const {
+void CudaStreamAsync::synchronize() const {
   checkCudaErrors(cudaStreamSynchronize(*stream_ptr_));
-}
-
-CudaStreamOwning::CudaStreamOwning(const unsigned int flags)
-    : CudaStream(&stream_) {
-  checkCudaErrors(cudaStreamCreateWithFlags(&stream_, flags));
 }
 
 CudaStreamOwning::~CudaStreamOwning() {
   this->synchronize();
   checkCudaErrors(cudaStreamDestroy(stream_));
+}
+
+CudaStreamOwning::CudaStreamOwning(const unsigned int flags)
+    : CudaStreamAsync(&stream_) {
+  checkCudaErrors(cudaStreamCreateWithFlags(&stream_, flags));
+}
+
+void DefaultStream::synchronize() const {
+  checkCudaErrors(cudaStreamSynchronize(default_stream_));
+}
+
+std::shared_ptr<CudaStream> CudaStream::createCudaStream(
+    CudaStreamType stream_type) {
+  switch (stream_type) {
+    case CudaStreamType::kLegacyDefault:
+      return std::make_shared<DefaultStream>(cudaStreamLegacy);
+    case CudaStreamType::kBlocking:
+      return std::make_shared<CudaStreamOwning>(cudaStreamDefault);
+    case CudaStreamType::kNonBlocking:
+      return std::make_shared<CudaStreamOwning>(cudaStreamNonBlocking);
+    case CudaStreamType::kPerThreadDefault:
+      return std::make_shared<DefaultStream>(cudaStreamPerThread);
+    default:
+      throw std::invalid_argument("received unspported CudaStreamType!");
+  }
 }
 
 }  // namespace nvblox

@@ -43,6 +43,38 @@ LayerType* LayerCake::add(MemoryType memory_type) {
 }
 
 template <typename LayerType>
+std::shared_ptr<LayerType> LayerCake::getSharedPtr() {
+  auto it = layers_.find(std::type_index(typeid(LayerType)));
+  if (it != layers_.end()) {
+    std::shared_ptr<BaseLayer> base_ptr = it->second;
+    std::shared_ptr<LayerType> ptr =
+        std::dynamic_pointer_cast<LayerType>(base_ptr);
+    CHECK(ptr);
+    return ptr;
+  } else {
+    LOG(WARNING) << "Request for a LayerType: " << typeid(LayerType).name()
+                 << " which is not in the cake.";
+    return std::shared_ptr<LayerType>();
+  }
+}
+
+template <typename LayerType>
+std::shared_ptr<const LayerType> LayerCake::getConstSharedPtr() const {
+  auto it = layers_.find(std::type_index(typeid(LayerType)));
+  if (it != layers_.end()) {
+    std::shared_ptr<const BaseLayer> base_ptr = it->second;
+    std::shared_ptr<const LayerType> ptr =
+        std::dynamic_pointer_cast<const LayerType>(base_ptr);
+    CHECK(ptr);
+    return ptr;
+  } else {
+    LOG(WARNING) << "Request for a LayerType: " << typeid(LayerType).name()
+                 << " which is not in the cake.";
+    return std::shared_ptr<const LayerType>();
+  }
+}
+
+template <typename LayerType>
 const LayerType* LayerCake::getConstPtr() const {
   auto it = layers_.find(std::type_index(typeid(LayerType)));
   if (it != layers_.end()) {
@@ -108,7 +140,7 @@ LayerCake LayerCake::create(float voxel_size, MemoryTypes... memory_types) {
 }
 
 void LayerCake::insert(const std::type_index& type_index,
-                       std::unique_ptr<BaseLayer>&& layer) {
+                       std::shared_ptr<BaseLayer>&& layer) {
   layers_.emplace(type_index, std::move(layer));
 }
 

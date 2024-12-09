@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -20,6 +20,15 @@ limitations under the License.
 #include "nvblox/map/layer.h"
 
 namespace nvblox {
+
+/// Check whether the block is touched by an AABB, no matter how little.
+/// @param block_size Metric size of the block.
+/// @param aabb Axis-Aligned Bounding Box that does the touching.
+/// @return Boolean whether the block is touched.
+inline bool isBlockTouchedByBoundingBox(const Index3D& block_index,
+                                        float block_size,
+                                        const AxisAlignedBoundingBox& aabb_L);
+
 /// Get all of the blocks that are touched by an AABB, no matter how little.
 /// @param block_size Metric size of the block.
 /// @param aabb Axis-Aligned Bounding Box that does the touching.

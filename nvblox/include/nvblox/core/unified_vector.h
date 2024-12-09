@@ -31,6 +31,8 @@ class unified_vector {
  public:
   typedef RawIterator<T> iterator;
   typedef RawIterator<const T> const_iterator;
+  typedef typename std::remove_extent<T>::type T_noextent;
+  typedef typename std::remove_cv<T>::type T_nonconst;
 
   static constexpr MemoryType kDefaultMemoryType = MemoryType::kUnified;
 
@@ -43,11 +45,13 @@ class unified_vector {
   unified_vector(MemoryType memory_type = kDefaultMemoryType);
 
   /// Construct resized with a given memory type
-  unified_vector(size_t size, MemoryType memory_type = kDefaultMemoryType);
+  unified_vector(size_t size, MemoryType memory_type = kDefaultMemoryType,
+                 const CudaStream& cuda_stream = CudaStreamOwning());
 
   /// Construct resized and constant-initialized with a given memory type
   unified_vector(size_t size, const T& initial,
-                 MemoryType memory_type = kDefaultMemoryType);
+                 MemoryType memory_type = kDefaultMemoryType,
+                 const CudaStream& cuda_stream = CudaStreamOwning());
 
   /// Copy constructors are deleted. Use copyFrom instead
   unified_vector(const unified_vector<T>& other) = delete;
@@ -67,17 +71,19 @@ class unified_vector {
 
   // Assignment operator is deleted. Use copyFrom instead.
 
-  /// Deep copies with and without stream synchronization
+  /// Deep copies.
   /// OtherVectorType must be compliant with std::vector
   template <typename OtherVectorType>
   void copyFromAsync(const OtherVectorType& other,
-                     const CudaStream cuda_stream);
-  template <typename OtherVectorType>
-  void copyFrom(const OtherVectorType& other);
+                     const CudaStream& cuda_stream);
+  void copyFromAsync(const T_noextent* const raw_ptr, const size_t num_elements,
+                     const CudaStream& cuda_stream);
+
+  /// Copy to a raw pointer.
+  void copyToAsync(T_noextent* raw_ptr, const CudaStream& cuda_stream) const;
 
   /// Convert to an std::vector. Creates a copy.
-  std::vector<T> toVector() const;
-  std::vector<T> toVectorAsync(const CudaStream cuda_stream) const;
+  std::vector<T> toVectorAsync(const CudaStream& cuda_stream) const;
 
   /// Get raw pointers. This is also for GPU pointers.
   T* data();
@@ -94,23 +100,22 @@ class unified_vector {
 
   /// Reserve space without changing the size.
   /// Memory will be reallocated only if new capacity is greater than current.
-  void reserve(size_t capacity);
-  void reserveAsync(size_t capacity, const CudaStream cuda_stream);
+  void reserveAsync(size_t capacity, const CudaStream& cuda_stream);
 
   /// Change the size
   /// Memory will be reallocated only if new size is greater than current
   /// capacity
-  void resize(size_t size);
-  void resizeAsync(size_t size, const CudaStream cuda_stream);
+  void resizeAsync(size_t size, const CudaStream& cuda_stream);
 
-  /// Clear and deallocate memory
-  void clear();
+  /// Clear the vector and deallocate the data
+  void clearAndDeallocate();
 
-  /// Clear without deallocation
-  void clearNoDealloc();
+  /// Clear without deallocating
+  void clearNoDeallocate();
 
   /// Adding elements.
-  void push_back(const T& value);
+  void push_back(const T& value,
+                 const CudaStream& cuda_stream = CudaStreamOwning());
 
   /// Iterator access.
   iterator begin();
@@ -124,9 +129,7 @@ class unified_vector {
   MemoryType memory_type() const { return memory_type_; }
 
   /// Set the entire *memory* of the vector to zero.
-  void setAsync(int val, const CudaStream cuda_stream);
-  void setZeroAsync(const CudaStream cuda_stream);
-  void setZero();
+  void setZeroAsync(const CudaStream& cuda_stream);
 
  private:
   MemoryType memory_type_;
@@ -157,6 +160,17 @@ class host_vector : public unified_vector<T> {
   host_vector(size_t size, const T& initial)
       : unified_vector<T>(size, initial, MemoryType::kHost) {}
 };
+
+/// Expands a buffers to required_min_size*1.5 factor if available capacity is
+/// smaller than required_min_size.
+/// @tparam ...Args Type of buffers. Must be unified_vector, host_vector, or
+/// device_vector.
+/// @param required_min_size The minimum size required of the buffers.
+/// @param cuda_stream The stream to do the expansion on
+/// @param ...args The unified_vectors.
+template <class... Args>
+void expandBuffersIfRequired(size_t required_min_size,
+                             const CudaStream& cuda_stream, Args... args);
 
 }  // namespace nvblox
 

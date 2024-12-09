@@ -103,7 +103,7 @@ std::unique_ptr<ImageLoader<ImageType>> createImageLoader(
     constexpr unsigned int kMaxLoadingThreads = 6;
     unsigned int num_loading_threads =
         std::min(kMaxLoadingThreads, std::thread::hardware_concurrency() / 2);
-    CHECK_GT(num_loading_threads, 0)
+    CHECK_GT(num_loading_threads, 0U)
         << "std::thread::hardware_concurrency() returned 0";
     LOG(INFO) << "Using " << num_loading_threads
               << " threads for loading images.";

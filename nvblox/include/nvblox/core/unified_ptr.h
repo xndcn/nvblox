@@ -111,32 +111,32 @@ class unified_ptr {
   unified_ptr<T_nonconst> clone() const;
   unified_ptr<T_nonconst> clone(MemoryType memory_type) const;
 
-  unified_ptr<T_nonconst> cloneAsync(const CudaStream cuda_stream) const;
+  unified_ptr<T_nonconst> cloneAsync(const CudaStream& cuda_stream) const;
   unified_ptr<T_nonconst> cloneAsync(MemoryType memory_type,
-                                     const CudaStream cuda_stream) const;
+                                     const CudaStream& cuda_stream) const;
 
   /// Copy memory between two unified ptrs, potentially of different memory
   /// types.
   void copyTo(unified_ptr<T_nonconst>& ptr) const;
   void copyToAsync(unified_ptr<T_nonconst>& ptr,
-                   const CudaStream cuda_stream) const;
+                   const CudaStream& cuda_stream) const;
   void copyFrom(unified_ptr<T_nonconst>& ptr);
   void copyFromAsync(unified_ptr<T_nonconst>& ptr,
-                     const CudaStream cuda_stream);
+                     const CudaStream& cuda_stream);
   void copyFromAsync(unified_ptr<const T_nonconst>& ptr,
-                     const CudaStream cuda_stream);
+                     const CudaStream& cuda_stream);
 
   /// Copy to/from a raw pointer.
   void copyTo(T_noextent* raw_ptr) const;
-  void copyToAsync(T_noextent* raw_ptr, const CudaStream cuda_stream) const;
+  void copyToAsync(T_noextent* raw_ptr, const CudaStream& cuda_stream) const;
   void copyFrom(const T_noextent* const raw_ptr, const size_t num_elements);
   void copyFromAsync(const T_noextent* const raw_ptr, const size_t num_elements,
-                     const CudaStream cuda_stream);
+                     const CudaStream& cuda_stream);
 
   MemoryType memory_type() const { return memory_type_; }
 
   /// Helper function to memset all the memory to 0.
-  void setZeroAsync(const CudaStream cuda_stream);
+  void setZeroAsync(const CudaStream& cuda_stream);
   void setZero();
 
   // Unified pointer has heaps of friends.

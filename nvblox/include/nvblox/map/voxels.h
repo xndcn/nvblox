@@ -24,7 +24,7 @@ namespace nvblox {
 
 /// A voxel storing TSDF (truncated signed distance field) values.
 struct TsdfVoxel {
-  TsdfVoxel() : distance(0.0f), weight(0.0f) {}
+  __host__ __device__ TsdfVoxel() : distance(0.0f), weight(0.0f) {}
   /// Signed projective distance of the voxel from a surface.
   float distance;
   /// How many observations/how confident we are in this observation.
@@ -34,7 +34,7 @@ struct TsdfVoxel {
 /// The freespace voxels and layer including its updating is based on
 /// the dynablox paper: https://ieeexplore.ieee.org/document/10218983
 struct FreespaceVoxel {
-  FreespaceVoxel()
+  __host__ __device__ FreespaceVoxel()
       : last_occupied_timestamp_ms(0),
         consecutive_occupancy_duration_ms(0),
         is_high_confidence_freespace(false) {}
@@ -51,7 +51,7 @@ struct FreespaceVoxel {
 
 /// Voxels that stores the distance and full direction to the nearest surface.
 struct EsdfVoxel {
-  EsdfVoxel()
+  __host__ __device__ EsdfVoxel()
       : squared_distance_vox(0.0f),
         parent_direction(Eigen::Vector3i::Zero()),
         is_inside(false),
@@ -73,7 +73,7 @@ struct EsdfVoxel {
 
 /// Voxel that stores the color near the surface.
 struct ColorVoxel {
-  ColorVoxel() : color(Color::Gray()), weight(0.0f) {}
+  __host__ __device__ ColorVoxel() : color(Color::Gray()), weight(0.0f) {}
   /// The color!
   Color color;
   /// How many observations/how confident we are in this observation.
@@ -81,7 +81,7 @@ struct ColorVoxel {
 };
 
 struct OccupancyVoxel {
-  OccupancyVoxel() : log_odds(0.0f) {}
+  __host__ __device__ OccupancyVoxel() : log_odds(0.0f) {}
   float log_odds;
 };
 

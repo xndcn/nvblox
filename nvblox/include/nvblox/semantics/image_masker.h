@@ -108,11 +108,6 @@ class ImageMasker {
       const std::string& name_remap = std::string()) const;
 
  private:
-  template <typename ImageType>
-  void allocateOutput(const ImageType& input, ImageType* unmasked_output,
-                      ImageType* masked_output,
-                      ColorImage* overlay_output = nullptr);
-
   // Image buffers
   DepthImage min_depth_image_{MemoryType::kDevice};
 

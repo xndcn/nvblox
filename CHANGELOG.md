@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [v.0.0.7] - Date: 2024-12-05
+
+### Added
+
+- Add support for masked depth in TSDF integrator. (#758)
+- CHECK-style macros in device code. (#693)
+- Add blocks in view caching. (#657)
+- Add layer streamer class. (#636)
+- Add handling of any number of GPU hash collissions. (#631)
+- Add workspace bounds for manipulator usecases. (#600)
+
+
+### Changed
+
+- Modernize the cmake build system. (#751)
+- Separate index tracker for mesh. (#683)
+- Masked depth image to reduce size of occupancy layer. (#624)
+- Batch initialization of recycled blocks. (#611)
+
+
+### Fixed
+
+- Memory-type fixes in image and unif-vector + resizing. (#649)
+- Fix memory leak test hang due to excessive stream creation. (#618)
+- Reduce cuda stream creation for dynamics. (#605)
+- Hashmap resizing fixed. (#582)
+
+
 ## [v.0.0.6] - Date: 2024-05-08
 
 ### Added

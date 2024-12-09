@@ -42,7 +42,13 @@ TEST_P(ParameterizedImageMaskerTest, RandomMask) {
   const int rows = 480;
   const int cols = 640;
   const int size_addon = GetParam();
+  // Depth image used for test cases where depth and color comes from
+  // different cameras.
   DepthImage depth(rows, cols, MemoryType::kUnified);
+  // We also need an "addon" version of depth for test cases where depth and
+  // color comes from the same camera.
+  DepthImage depth_size_addon(rows + size_addon, cols + size_addon,
+                              MemoryType::kUnified);
   ColorImage color(rows + size_addon, cols + size_addon, MemoryType::kUnified);
   MonoImage mask(rows + size_addon, cols + size_addon, MemoryType::kUnified);
   const Camera depth_camera = getTestCamera(cols, rows);
@@ -57,6 +63,7 @@ TEST_P(ParameterizedImageMaskerTest, RandomMask) {
     for (int col_idx = 0; col_idx < mask.cols(); col_idx++) {
       mask(row_idx, col_idx) = std::rand() % 2;
       color(row_idx, col_idx) = valid_pixel_color;
+      depth_size_addon(row_idx, col_idx) = 1.0;
     }
   }
   for (int row_idx = 0; row_idx < depth.rows(); row_idx++) {
@@ -69,12 +76,17 @@ TEST_P(ParameterizedImageMaskerTest, RandomMask) {
   ImageMasker image_masker;
   DepthImage unmasked_depth_output(MemoryType::kDevice);
   DepthImage masked_depth_output(MemoryType::kDevice);
+  DepthImage unmasked_depth_size_addon_output(MemoryType::kDevice);
+  DepthImage masked_depth_size_addon_output(MemoryType::kDevice);
   ColorImage unmasked_color_output(MemoryType::kDevice);
   ColorImage masked_color_output(MemoryType::kDevice);
 
   Transform T_CM_CD = Transform::Identity();
   image_masker.splitImageOnGPU(depth, mask, T_CM_CD, depth_camera, mask_camera,
                                &unmasked_depth_output, &masked_depth_output);
+  image_masker.splitImageOnGPU(depth_size_addon, mask, T_CM_CD, mask_camera,
+                               mask_camera, &unmasked_depth_size_addon_output,
+                               &masked_depth_size_addon_output);
   image_masker.splitImageOnGPU(color, mask, &unmasked_color_output,
                                &masked_color_output);
 
@@ -88,10 +100,14 @@ TEST_P(ParameterizedImageMaskerTest, RandomMask) {
       if (mask(row_idx, col_idx)) {
         EXPECT_EQ(unmasked_color_output(row_idx, col_idx), invalid_pixel_color);
         EXPECT_EQ(masked_color_output(row_idx, col_idx), valid_pixel_color);
+        EXPECT_EQ(unmasked_depth_size_addon_output(row_idx, col_idx), -1.0f);
+        EXPECT_EQ(masked_depth_size_addon_output(row_idx, col_idx), 1.0f);
         ++num_valid_pixels_color;
       } else {
         EXPECT_EQ(unmasked_color_output(row_idx, col_idx), valid_pixel_color);
         EXPECT_EQ(masked_color_output(row_idx, col_idx), invalid_pixel_color);
+        EXPECT_EQ(unmasked_depth_size_addon_output(row_idx, col_idx), 1.0f);
+        EXPECT_EQ(masked_depth_size_addon_output(row_idx, col_idx), -1.0f);
         ++num_invalid_pixels_color;
       }
     }
@@ -106,12 +122,14 @@ TEST_P(ParameterizedImageMaskerTest, RandomMask) {
                     kFloatEpsilon);
         EXPECT_NEAR(masked_depth_output(depth_row_idx, depth_col_idx), 1.0f,
                     kFloatEpsilon);
+
         ++num_valid_pixels_depth;
       } else {
         EXPECT_NEAR(unmasked_depth_output(depth_row_idx, depth_col_idx), 1.0f,
                     kFloatEpsilon);
         EXPECT_NEAR(masked_depth_output(depth_row_idx, depth_col_idx), -1.0f,
                     kFloatEpsilon);
+
         ++num_invalid_pixels_depth;
       }
     }
@@ -147,7 +165,7 @@ TEST(ImageMaskerTest, PerpendicularTransformMask) {
   const Camera mask_camera = getTestCamera(cols, rows);
 
   // Mask the center pixel
-  mask.setZero();
+  mask.setZeroAsync(CudaStreamOwning());
   mask(rows / 2, cols / 2) = 1;
 
   // Set the whole depth image to one

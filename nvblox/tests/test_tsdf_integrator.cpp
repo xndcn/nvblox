@@ -362,7 +362,7 @@ TEST_F(TsdfIntegratorTest, WeightingFunction) {
   // Change to constant weight
   integrator.weighting_function_type(WeightingFunctionType::kConstantWeight);
 
-  // Plane centered at (0,0,depth) with random (slight) slant
+  // Plane centered at (0,0,depth)
   const float kPlaneDistance = 5.0f;
   const test_utils::Plane plane = test_utils::Plane(
       Vector3f(0.0f, 0.0f, kPlaneDistance), Vector3f(0.0f, 0.0f, -1.0f));
@@ -465,6 +465,60 @@ TEST_F(TsdfIntegratorTest, WeightingFunction) {
   EXPECT_GT(num_voxels_observed, 0);
 }
 
+TEST_F(TsdfIntegratorTest, mask) {
+  constexpr int kWidth = 320;
+  constexpr int kHeight = 200;
+
+  // Depth image with a constant depth
+  constexpr float kDepth = 5.F;
+  DepthImage depth_frame(kWidth, kHeight, MemoryType::kHost);
+  for (int i = 0; i < depth_frame.numel(); ++i) {
+    depth_frame(i) = kDepth;
+  }
+
+  // First integrate without mask to create blocks
+  ProjectiveTsdfIntegrator integrator;
+  std::vector<Index3D> updated_blocks;
+  integrator.integrateFrame(depth_frame, Transform::Identity(), camera_,
+                            &layer_, &updated_blocks);
+  EXPECT_GT(updated_blocks.size(), 0);
+
+  // Set distance of all blocks to some reference value
+  constexpr float kReference = 99.F;
+  auto block_pointers = layer_.getAllBlockPointers();
+  for (auto block_ptr : block_pointers) {
+    for (auto& voxel : (*block_ptr)) {
+      voxel.distance = kReference;
+    }
+  }
+
+  // Now, integrate with empty mask. This should only affect voxels in front of
+  // the surface
+  MonoImage mask_frame(kWidth, kHeight, MemoryType::kHost);
+  mask_frame.setZeroAsync(CudaStreamOwning());
+  integrator.integrateFrame({depth_frame, mask_frame}, Transform::Identity(),
+                            camera_, &layer_, &updated_blocks);
+  EXPECT_GT(updated_blocks.size(), 0);
+
+  // Distance of voxels beyond positive truncation distance should equal to
+  // reference value
+  const float truncation_distance_m =
+      integrator.truncation_distance_vox() * voxel_size_m_;
+  callFunctionOnAllVoxels<TsdfVoxel>(
+      layer_,
+      [&](const Index3D& block_index, const Index3D& voxel_index,
+          const TsdfVoxel* voxel) -> void {
+        const Vector3f pos = getCenterPositionFromBlockIndexAndVoxelIndex(
+            layer_.block_size(), block_index, voxel_index);
+        constexpr float kEps = 1E-3;
+        if (pos.z() > kDepth - truncation_distance_m) {
+          EXPECT_NEAR(voxel->distance, kReference, kEps);
+        } else {
+          EXPECT_LT(voxel->distance, kReference + kEps);
+        }
+        return;
+      });
+}
 int main(int argc, char** argv) {
   FLAGS_alsologtostderr = true;
   google::InitGoogleLogging(argv[0]);

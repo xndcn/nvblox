@@ -43,16 +43,16 @@ class ProjectiveIntegrator {
 
   /// Update a generic layer using depth image
   template <typename UpdateFunctor>
-  void integrateFrame(const DepthImage& depth_frame, const Transform& T_L_C,
-                      const Camera& camera, UpdateFunctor* op,
-                      VoxelBlockLayer<VoxelType>* layer,
+  void integrateFrame(const MaskedDepthImageConstView& depth_frame,
+                      const Transform& T_L_C, const Camera& camera,
+                      UpdateFunctor* op, VoxelBlockLayer<VoxelType>* layer,
                       std::vector<Index3D>* updated_blocks);
 
   /// Update a generic layer using a (potentially) sparse depth image from lidar
   template <typename UpdateFunctor>
-  void integrateFrame(const DepthImage& depth_frame, const Transform& T_L_C,
-                      const Lidar& lidar, UpdateFunctor* op,
-                      VoxelBlockLayer<VoxelType>* layer,
+  void integrateFrame(const MaskedDepthImageConstView& depth_frame,
+                      const Transform& T_L_C, const Lidar& lidar,
+                      UpdateFunctor* op, VoxelBlockLayer<VoxelType>* layer,
                       std::vector<Index3D>* updated_blocks);
 
   /// A parameter getter
@@ -67,7 +67,7 @@ class ProjectiveIntegrator {
   /// A parameter getter
   /// The maximum allowable distance between a reprojected voxel's center and
   /// the ray performing this integration. Above this we consider nearest
-  /// nieghbour interpolation to have failed.
+  /// neighbour interpolation to have failed.
   /// @returns the maximum allowable distance in voxels
   float lidar_nearest_interpolation_max_allowable_dist_to_ray_vox() const;
 
@@ -138,7 +138,7 @@ class ProjectiveIntegrator {
   // Called from the integrateFrame() interfaces.
   // Captures common behaviour between sensors.
   template <typename SensorType, typename UpdateFunctor>
-  void integrateFrameTemplate(const DepthImage& depth_frame,
+  void integrateFrameTemplate(const MaskedDepthImageConstView& depth_frame,
                               const ColorImage& color_frame,
                               const Transform& T_L_C, const SensorType& sensor,
                               UpdateFunctor* op,
@@ -148,12 +148,12 @@ class ProjectiveIntegrator {
   // Two methods below are specialized for Camera/LiDAR
   // - Calls GPU kernel to do block update.
   template <typename UpdateFunctor>
-  void integrateBlocks(const DepthImage& depth_frame,
+  void integrateBlocks(const MaskedDepthImageConstView& depth_frame,
                        const ColorImage& color_frame, const Transform& T_C_L,
                        const Camera& camera, UpdateFunctor* op,
                        VoxelBlockLayer<VoxelType>* layer_ptr);
   template <typename UpdateFunctor>
-  void integrateBlocks(const DepthImage& depth_frame,
+  void integrateBlocks(const MaskedDepthImageConstView& depth_frame,
                        const ColorImage& color_frame, const Transform& T_C_L,
                        const Lidar& lidar, UpdateFunctor* op,
                        VoxelBlockLayer<VoxelType>* layer_ptr);

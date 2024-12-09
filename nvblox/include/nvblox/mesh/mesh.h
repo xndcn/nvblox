@@ -35,7 +35,7 @@ struct Mesh {
 
   /// Create a combined Mesh object from a MeshBlock layer. Useful for mesh
   /// output.
-  static Mesh fromLayer(const MeshLayer& layer);
+  static Mesh fromLayer(const MeshLayer& layer, const CudaStream& cuda_stream);
 };
 
 }  // namespace nvblox

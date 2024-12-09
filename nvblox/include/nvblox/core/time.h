@@ -33,6 +33,9 @@ class Time {
   __host__ __device__ bool operator==(const Time& other) const {
     return time_ == other.time_;
   }
+  __host__ __device__ bool operator!=(const Time& other) const {
+    return time_ != other.time_;
+  }
   __host__ __device__ bool operator<(const Time& other) const {
     return time_ < other.time_;
   }
@@ -67,6 +70,11 @@ class Time {
 
 __host__ inline Time operator*(int scalar, Time time) {
   return Time(scalar * static_cast<int64_t>(time));
+}
+
+__host__ inline std::ostream& operator<<(std::ostream& os, const Time& time) {
+  os << static_cast<int64_t>(time);
+  return os;
 }
 
 }  // namespace nvblox

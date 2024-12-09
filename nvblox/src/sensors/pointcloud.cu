@@ -12,30 +12,18 @@ Pointcloud::Pointcloud(MemoryType memory_type)
     // vector
     : points_(unified_vector<Vector3f>(0, memory_type)) {}
 
-void Pointcloud::copyFrom(const Pointcloud& other) {
-  points_.copyFrom(other.points_);
-}
-
 void Pointcloud::copyFromAsync(const Pointcloud& other,
-                               const CudaStream cuda_stream) {
+                               const CudaStream& cuda_stream) {
   points_.copyFromAsync(other.points_, cuda_stream);
 }
 
-void Pointcloud::copyFrom(const std::vector<Vector3f>& points) {
-  points_.copyFrom(points);
-}
-
 void Pointcloud::copyFromAsync(const std::vector<Vector3f>& points,
-                               const CudaStream cuda_stream) {
+                               const CudaStream& cuda_stream) {
   points_.copyFromAsync(points, cuda_stream);
 }
 
-void Pointcloud::copyFrom(const unified_vector<Vector3f>& points) {
-  points_.copyFrom(points);
-}
-
 void Pointcloud::copyFromAsync(const unified_vector<Vector3f>& points,
-                               const CudaStream cuda_stream) {
+                               const CudaStream& cuda_stream) {
   points_.copyFromAsync(points, cuda_stream);
 }
 

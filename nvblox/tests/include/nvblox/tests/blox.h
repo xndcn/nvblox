@@ -18,6 +18,7 @@ limitations under the License.
 #include "nvblox/core/types.h"
 #include "nvblox/core/unified_ptr.h"
 #include "nvblox/map/layer.h"
+#include "nvblox/serialization/internal/layer_streamer_traits.h"
 #include "nvblox/tests/voxels.h"
 
 namespace nvblox {
@@ -100,6 +101,15 @@ struct InitializationTestVoxel {
 
   uint8_t data = kCPUInitializationValue;
 };
+using InitializationTestBlock = VoxelBlock<InitializationTestVoxel>;
+
+template <class BlockType>
+void setBlocksToZeroAsync(host_vector<typename BlockType::Ptr>& blocks,
+                          const CudaStream&) {
+  for (auto& block : blocks) {
+    *block = BlockType();
+  }
+}
 
 template <>
 inline void VoxelBlock<InitializationTestVoxel>::initAsync(
@@ -128,5 +138,6 @@ using FloatVoxelBlock = VoxelBlock<FloatVoxel>;
 using FloatVoxelLayer = VoxelBlockLayer<FloatVoxel>;
 using InitializationTestVoxelBlock = VoxelBlock<InitializationTestVoxel>;
 using InitializationTestVoxelLayer = VoxelBlockLayer<InitializationTestVoxel>;
+using BooleanLayer = BlockLayer<BooleanBlock>;
 
 }  // namespace nvblox

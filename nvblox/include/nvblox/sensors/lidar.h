@@ -137,6 +137,11 @@ __host__ inline bool operator==(const Lidar& lhs, const Lidar& rhs);
 // Stream LiDAR as text
 __host__ inline std::ostream& operator<<(std::ostream& os, const Lidar& camera);
 
+// Tests for equality of both intrinsics and extrinsics.
+__host__ inline bool areLidarsEqual(const Lidar& lidar_1, const Lidar& lidar_2,
+                                    const Transform& T_L_C1,
+                                    const Transform& T_L_C2);
+
 }  // namespace nvblox
 
 #include "nvblox/sensors/internal/impl/lidar_impl.h"

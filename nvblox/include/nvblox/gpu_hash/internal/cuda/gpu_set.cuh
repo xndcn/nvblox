@@ -49,6 +49,6 @@ void copySetToVector(const Index3DDeviceSetType& set,
                      std::vector<Index3D>* vec);
 void copySetToDeviceVectorAsync(const Index3DDeviceSetType& set,
                                 device_vector<Index3D>* vec,
-                                const CudaStream cuda_stream);
+                                const CudaStream& cuda_stream);
 
 }  // namespace nvblox

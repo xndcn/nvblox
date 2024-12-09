@@ -58,17 +58,6 @@ void allocateBlocksWhereRequired(const std::vector<Index3D>& block_indices,
                                  BlockLayer<BlockType>* layer,
                                  const CudaStream& cuda_stream);
 
-/// Expands a buffers to required_min_size*1.5 factor if available capacity is
-/// smaller than required_min_size.
-/// @tparam ...Args Type of buffers. Must be unified_vector, host_vector, or
-/// device_vector.
-/// @param required_min_size The minimum size required of the buffers.
-/// @param cuda_stream The stream to do the expansion on
-/// @param ...args The unified_vectors.
-template <class... Args>
-void expandBuffersIfRequired(size_t required_min_size, CudaStream cuda_stream,
-                             Args... args);
-
 /// Copies block pointers belonging to a vector of block indices to the
 /// device.
 ///
@@ -83,7 +72,7 @@ void expandBuffersIfRequired(size_t required_min_size, CudaStream cuda_stream,
 /// @param block_ptrs_device The device memory buffer for the indices.
 template <typename BlockType>
 void transferBlockPointersToDevice(
-    const std::vector<Index3D>& block_indices, CudaStream cuda_stream,
+    const std::vector<Index3D>& block_indices, const CudaStream& cuda_stream,
     BlockLayer<BlockType>* layer_ptr, host_vector<BlockType*>* block_ptrs_host,
     device_vector<BlockType*>* block_ptrs_device);
 
@@ -99,7 +88,7 @@ void transferBlockPointersToDevice(
 /// @param block_indices_device  The device memory buffer for the block
 /// pointers.
 void transferBlocksIndicesToDevice(
-    const std::vector<Index3D>& block_indices, CudaStream cuda_stream,
+    const std::vector<Index3D>& block_indices, const CudaStream& cuda_stream,
     host_vector<Index3D>* block_indices_host,
     device_vector<Index3D>* block_indices_device);
 

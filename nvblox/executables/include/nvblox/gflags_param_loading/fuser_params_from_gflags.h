@@ -18,6 +18,7 @@ limitations under the License.
 #include <gflags/gflags.h>
 
 #include "nvblox/executables/fuser.h"
+#include "nvblox/mapper/multi_mapper_params.h"
 
 namespace nvblox {
 
@@ -32,12 +33,6 @@ DEFINE_bool(use_2d_esdf_mode, false, "Use the 2d ESDF mode (3D if false).");
 DEFINE_bool(mapping_type_static_occupancy, false,
             "mapping type: kStaticOccupancy");
 DEFINE_bool(mapping_type_dynamic, false, "mapping type: kDynamic");
-
-// Multi mapper params
-DEFINE_int32(connected_mask_component_size_threshold,
-             MultiMapper::kDefaultConnectedMaskComponentSizeThreshold,
-             "The minimum number of pixels of a connected component in the "
-             "mask image to count as a dynamic detection.");
 
 // Dataset flags
 DEFINE_int32(num_frames, -1,
@@ -79,10 +74,9 @@ DEFINE_double(
 
 // ============================ GET THE PARAMS ============================
 
-inline void get_multi_mapper_params_from_gflags(float* voxel_size,
-                                                MappingType* mapping_type,
-                                                EsdfMode* esdf_mode,
-                                                MultiMapper::Params* params) {
+inline void get_global_params_from_gflags(float* voxel_size,
+                                          MappingType* mapping_type,
+                                          EsdfMode* esdf_mode) {
   if (!gflags::GetCommandLineFlagInfoOrDie("voxel_size").is_default) {
     LOG(INFO) << "Command line parameter found: voxel_size = "
               << FLAGS_voxel_size;
@@ -110,15 +104,6 @@ inline void get_multi_mapper_params_from_gflags(float* voxel_size,
     LOG(INFO) << "Command line parameter found: use_2d_esdf_mode = "
               << FLAGS_use_2d_esdf_mode;
     *esdf_mode = EsdfMode::k2D;
-  }
-  if (!gflags::GetCommandLineFlagInfoOrDie(
-           "connected_mask_component_size_threshold")
-           .is_default) {
-    LOG(INFO) << "Command line parameter found: "
-                 "connected_mask_component_size_threshold = "
-              << FLAGS_connected_mask_component_size_threshold;
-    params->connected_mask_component_size_threshold =
-        FLAGS_connected_mask_component_size_threshold;
   }
 }
 

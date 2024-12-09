@@ -188,7 +188,7 @@ TEST_F(FreespaceIntegratorTest, FreespacePlane) {
   tsdf_integrator.integrateFrame(depth_frame, T_L_C, camera_, &tsdf_layer,
                                  &updated_blocks);
   freespace_integrator.updateFreespaceLayer(updated_blocks, start_time_ms,
-                                            tsdf_layer, &freespace_layer);
+                                            tsdf_layer, {}, &freespace_layer);
   const std::vector<Index3D> block_indices = tsdf_layer.getAllBlockIndices();
 
   // Check that voxels are initialized to being occupied.
@@ -204,7 +204,7 @@ TEST_F(FreespaceIntegratorTest, FreespacePlane) {
   std::cout << "Check consecutive occupancy is increasing." << std::endl;
   Time current_time_ms = start_time_ms + time_step_ms;
   freespace_integrator.updateFreespaceLayer(updated_blocks, current_time_ms,
-                                            tsdf_layer, &freespace_layer);
+                                            tsdf_layer, {}, &freespace_layer);
   freespace_voxel_gt.consecutive_occupancy_duration_ms =
       current_time_ms - start_time_ms;
   checkVoxels(freespace_layer, tsdf_layer, block_indices, freespace_voxel_gt);
@@ -214,7 +214,7 @@ TEST_F(FreespaceIntegratorTest, FreespacePlane) {
   std::cout << "Check consecutive occupancy is terminated." << std::endl;
   current_time_ms = start_time_ms + 3 * time_step_ms;
   freespace_integrator.updateFreespaceLayer(updated_blocks, current_time_ms,
-                                            tsdf_layer, &freespace_layer);
+                                            tsdf_layer, {}, &freespace_layer);
   freespace_voxel_gt.consecutive_occupancy_duration_ms = Time(0);
   checkVoxels(freespace_layer, tsdf_layer, block_indices, freespace_voxel_gt);
 
@@ -223,7 +223,7 @@ TEST_F(FreespaceIntegratorTest, FreespacePlane) {
   std::cout << "Check change to high confidence freespace." << std::endl;
   current_time_ms = start_time_ms + 5 * time_step_ms;
   freespace_integrator.updateFreespaceLayer(updated_blocks, current_time_ms,
-                                            tsdf_layer, &freespace_layer);
+                                            tsdf_layer, {}, &freespace_layer);
   freespace_voxel_gt.is_high_confidence_freespace = true;
   checkVoxels(freespace_layer, tsdf_layer, block_indices, freespace_voxel_gt);
 
@@ -239,7 +239,7 @@ TEST_F(FreespaceIntegratorTest, FreespacePlane) {
   tsdf_integrator.integrateFrame(depth_frame, T_L_C, camera_, &tsdf_layer,
                                  &updated_blocks);
   freespace_integrator.updateFreespaceLayer(updated_blocks, plane_added_time_ms,
-                                            tsdf_layer, &freespace_layer);
+                                            tsdf_layer, {}, &freespace_layer);
 
   // Check that we updated the last occupied field but not did not abandon the
   // high confidence freespace flag yet.
@@ -261,16 +261,16 @@ TEST_F(FreespaceIntegratorTest, FreespacePlane) {
   // We have to integrate every second time step to not loose consecutive
   // occupancy.
   freespace_integrator.updateFreespaceLayer(
-      updated_blocks, plane_added_time_ms + 2 * time_step_ms, tsdf_layer,
+      updated_blocks, plane_added_time_ms + 2 * time_step_ms, tsdf_layer, {},
       &freespace_layer);
   freespace_integrator.updateFreespaceLayer(
-      updated_blocks, plane_added_time_ms + 4 * time_step_ms, tsdf_layer,
+      updated_blocks, plane_added_time_ms + 4 * time_step_ms, tsdf_layer, {},
       &freespace_layer);
   freespace_integrator.updateFreespaceLayer(
-      updated_blocks, plane_added_time_ms + 6 * time_step_ms, tsdf_layer,
+      updated_blocks, plane_added_time_ms + 6 * time_step_ms, tsdf_layer, {},
       &freespace_layer);
   freespace_integrator.updateFreespaceLayer(
-      updated_blocks, plane_added_time_ms + 8 * time_step_ms, tsdf_layer,
+      updated_blocks, plane_added_time_ms + 8 * time_step_ms, tsdf_layer, {},
       &freespace_layer);
   freespace_voxel_gt.last_occupied_timestamp_ms =
       plane_added_time_ms + 8 * time_step_ms;
@@ -284,7 +284,7 @@ TEST_F(FreespaceIntegratorTest, FreespacePlane) {
   // time_step_ms
   std::cout << "Check that we reset to occupied." << std::endl;
   freespace_integrator.updateFreespaceLayer(
-      updated_blocks, plane_added_time_ms + 10 * time_step_ms, tsdf_layer,
+      updated_blocks, plane_added_time_ms + 10 * time_step_ms, tsdf_layer, {},
       &freespace_layer);
   freespace_voxel_gt.last_occupied_timestamp_ms =
       plane_added_time_ms + 10 * time_step_ms;
@@ -292,6 +292,101 @@ TEST_F(FreespaceIntegratorTest, FreespacePlane) {
   freespace_voxel_gt.is_high_confidence_freespace = false;
   checkVoxels(freespace_layer, tsdf_layer, block_indices, freespace_voxel_gt,
               max_tsdf_distance_to_check);
+}
+
+void createTsdfLayerCube(const float distance, const float weight,
+                         const int side_length_in_blocks,
+                         TsdfLayer* tsdf_layer) {
+  CHECK(isAccessibleOnCPU(tsdf_layer->memory_type()));
+  for (int block_idx_x = 0; block_idx_x < side_length_in_blocks;
+       block_idx_x++) {
+    for (int block_idx_y = 0; block_idx_y < side_length_in_blocks;
+         block_idx_y++) {
+      for (int block_idx_z = 0; block_idx_z < side_length_in_blocks;
+           block_idx_z++) {
+        const Index3D block_idx(block_idx_x, block_idx_y, block_idx_z);
+        auto tsdf_block = tsdf_layer->allocateBlockAtIndex(block_idx);
+        callFunctionOnAllVoxels<TsdfVoxel>(
+            tsdf_block.get(), [&](const Index3D&, TsdfVoxel* tsdf_voxel_ptr) {
+              tsdf_voxel_ptr->distance = distance;
+              tsdf_voxel_ptr->weight = weight;
+            });
+      }
+    }
+  }
+}
+
+TEST_F(FreespaceIntegratorTest, ViewExclusion) {
+  // The idea of this test is:
+  // - Create a TSDF+Freespace layer in a 2x2x2 cube of blocks
+  // - Set TSDF layer free
+  // - Only update in a viewpoint
+  // - Check that all voxels that transition to freespace are in the view.
+
+  // Create a TSDF layer which is totally empty
+  TsdfLayer tsdf_layer(voxel_size_m_, MemoryType::kUnified);
+  constexpr int kEnvironmentMaxBlockExtent = 2;
+  const float distance = 10.0f * voxel_size_m_;
+  const float weight = 1.0f;
+  createTsdfLayerCube(distance, weight, kEnvironmentMaxBlockExtent,
+                      &tsdf_layer);
+  EXPECT_GT(tsdf_layer.numAllocatedBlocks(), 0);
+
+  // Make a camera view
+  constexpr float kDepthM = 5.0;
+  DepthImage depth_image(camera_.rows(), camera_.cols(), MemoryType::kUnified);
+  for (int row = 0; row < depth_image.rows(); row++) {
+    for (int col = 0; col < depth_image.cols(); col++) {
+      depth_image(row, col) = kDepthM;
+    }
+  }
+  ViewBasedInclusionData view(Transform::Identity(), camera_, &depth_image);
+
+  // Freespace layer + integrator
+  auto cuda_stream = std::make_shared<CudaStreamOwning>();
+  FreespaceLayer freespace_layer(voxel_size_m_, MemoryType::kUnified);
+  FreespaceIntegrator freespace_integrator(cuda_stream);
+
+  // Start warm up the layer with a call to initialize.
+  const auto all_blocks = tsdf_layer.getAllBlockIndices();
+  freespace_integrator.updateFreespaceLayer(all_blocks, nvblox::Time(0),
+                                            tsdf_layer, {}, &freespace_layer);
+
+  // NOTE(alexmillane): I need to do this twice for the freespace voxel to
+  // become free.
+  const Time min_time_ms =
+      freespace_integrator.min_duration_since_occupied_for_freespace_ms();
+  freespace_integrator.updateFreespaceLayer(all_blocks,
+                                            nvblox::Time(min_time_ms),
+                                            tsdf_layer, view, &freespace_layer);
+  freespace_integrator.updateFreespaceLayer(all_blocks,
+                                            nvblox::Time(2 * min_time_ms),
+                                            tsdf_layer, view, &freespace_layer);
+
+  // Count the free voxels
+  // Check that all freespace voxels are inside the camera view (they're the
+  // only ones that should have received an update).
+  int num_freespace_voxels = 0;
+  int num_non_freespace_voxels = 0;
+  callFunctionOnAllVoxels<FreespaceVoxel>(
+      freespace_layer, [&](const Index3D& block_idx, const Index3D& voxel_idx,
+                           const FreespaceVoxel* freespace_voxel) {
+        if (freespace_voxel->is_high_confidence_freespace) {
+          ++num_freespace_voxels;
+          // Get the voxel center
+          const Vector3f p_voxel_L =
+              getCenterPositionFromBlockIndexAndVoxelIndex(
+                  freespace_layer.block_size(), block_idx, voxel_idx);
+          // Check that the voxel center is in view.
+          Vector2f u_px;
+          const bool in_view = camera_.project(p_voxel_L, &u_px);
+          EXPECT_TRUE(in_view);
+        } else {
+          ++num_non_freespace_voxels;
+        }
+      });
+  EXPECT_GT(num_freespace_voxels, 0);
+  EXPECT_GT(num_non_freespace_voxels, 0);
 }
 
 int main(int argc, char** argv) {

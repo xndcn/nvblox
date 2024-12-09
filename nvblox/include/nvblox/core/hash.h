@@ -35,8 +35,7 @@ struct Index3DHash {
   static constexpr size_t sl2 = sl * sl;
 
   __host__ __device__ std::size_t operator()(const Index3D& index) const {
-    return static_cast<unsigned int>(index.x() + index.y() * sl +
-                                     index.z() * sl2);
+    return static_cast<size_t>(index.x() + index.y() * sl + index.z() * sl2);
   }
 };
 

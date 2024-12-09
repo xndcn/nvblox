@@ -23,9 +23,23 @@ constexpr Param<float>::Description kFreeRegionDecayProbabilityParamDesc{
     "free_region_decay_probability", .55f,
     "The decay probability that is applied to the free region on decay. Must "
     "be in [0.5, 1.0]."};
+
 constexpr Param<float>::Description kOccupiedRegionDecayProbabilityParamDesc{
     "occupied_region_decay_probability", .4f,
     "The decay probability that is applied to the occupied region on decay. "
     "Must be in [0.0, 0.5]."};
+
+constexpr Param<bool>::Description kOccupancyDecayToFreeParamDesc{
+    "occupancy_decay_to_free", false,
+    "If true we set fully decayed voxels to the free probability. Otherwise "
+    "they will set to unkown probability."};
+
+struct OccupancyDecayIntegratorParams {
+  Param<float> free_region_decay_probability{
+      kFreeRegionDecayProbabilityParamDesc};
+  Param<float> occupied_region_decay_probability{
+      kOccupiedRegionDecayProbabilityParamDesc};
+  Param<bool> occupancy_decay_to_free{kOccupancyDecayToFreeParamDesc};
+};
 
 }  // namespace nvblox

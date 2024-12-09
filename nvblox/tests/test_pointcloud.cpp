@@ -50,14 +50,14 @@ TEST(PointcloudTest, Copy) {
 
   // Copy
   Pointcloud pointcloud_copy_1(MemoryType::kUnified);
-  pointcloud_copy_1.copyFrom(pointcloud);
+  pointcloud_copy_1.copyFromAsync(pointcloud, CudaStreamOwning());
   Pointcloud pointcloud_copy_2(MemoryType::kUnified);
-  pointcloud_copy_2.copyFrom(pointcloud);
+  pointcloud_copy_2.copyFromAsync(pointcloud, CudaStreamOwning());
   EXPECT_EQ(pointcloud_copy_1.memory_type(), MemoryType::kUnified);
   EXPECT_EQ(pointcloud_copy_2.memory_type(), MemoryType::kUnified);
 
   // Set the original to zero
-  pointcloud.setZero();
+  pointcloud.setZeroAsync(CudaStreamOwning());
 
   // Read points
   for (int i = 0; i < kNumOfPoints; i++) {
@@ -83,7 +83,7 @@ TEST(PointcloudTest, DeviceCopy) {
 
   // Pointcloud to the device
   Pointcloud pointcloud_gpu(MemoryType::kDevice);
-  pointcloud_gpu.copyFrom(pointcloud);
+  pointcloud_gpu.copyFromAsync(pointcloud, CudaStreamOwning());
   EXPECT_EQ(pointcloud_gpu.memory_type(), MemoryType::kDevice);
 
   // Check that the data made it.
@@ -107,7 +107,7 @@ TEST(PointcloudTest, ConstructFromVector) {
 
   // To kUnified Pointcloud
   Pointcloud pointcloud(MemoryType::kUnified);
-  pointcloud.copyFrom(points_vec);
+  pointcloud.copyFromAsync(points_vec, CudaStreamOwning());
   EXPECT_EQ(pointcloud.memory_type(), MemoryType::kUnified);
 
   // Check

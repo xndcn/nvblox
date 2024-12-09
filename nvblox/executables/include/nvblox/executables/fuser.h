@@ -43,14 +43,16 @@ namespace nvblox {
 class Fuser {
  public:
   Fuser() = default;
-  Fuser(std::unique_ptr<datasets::RgbdDataLoaderInterface>&& data_loader);
+  Fuser(std::unique_ptr<datasets::RgbdDataLoaderInterface>&& data_loader,
+        bool init_from_gflags);
 
+  void initFromGflags();
   // Runs an experiment
   int run();
 
-  // Integrate certain layers.
-  bool integrateFrame(const int frame_number);
-  bool integrateFrames();
+  // Integrate a frame from the dataset
+  datasets::DataLoadResult integrateFrame(const int frame_number);
+  void integrateFrames();
 
   // Write a dynamic overlay image to disk.
   bool outputDynamicOverlayImage(int frame_number);
@@ -69,9 +71,21 @@ class Fuser {
   // Output the serialized map to a file
   bool outputMapToFile();
 
-  // Get the static mapper (useful for experiments where we modify mapper
-  // settings)
-  Mapper& static_mapper();
+  // Get access to the underlying mappers.
+  std::shared_ptr<Mapper> static_mapper();
+  std::shared_ptr<MultiMapper> multi_mapper();
+
+  // Set the multi mapper.
+  void setMultiMapper(const std::shared_ptr<MultiMapper>& multi_mapper);
+
+  // Getters for the loaded data and generated mesh.
+  std::shared_ptr<const ColorImage> getColorFrame() const;
+  std::shared_ptr<const DepthImage> getDepthFrame() const;
+  std::shared_ptr<const Camera> getDepthCamera() const;
+  std::shared_ptr<const Transform> getDepthCameraPose() const;
+  std::shared_ptr<const Camera> getColorCamera() const;
+  std::shared_ptr<const Transform> getColorCameraPose() const;
+  std::shared_ptr<const SerializedMeshLayer> getSerializedMesh() const;
 
   // MultiMapper - Contains two mappers
   std::shared_ptr<MultiMapper> multi_mapper_;
@@ -103,6 +117,17 @@ class Fuser {
   std::string mesh_output_path_;
   std::string map_output_path_;
   std::string dynamic_overlay_path_;
+
+  // Buffers for the loaded data and generated mesh.
+  std::shared_ptr<Transform> T_L_D_ = std::make_shared<Transform>();
+  std::shared_ptr<Camera> depth_camera_ = std::make_shared<Camera>();
+  std::shared_ptr<Transform> T_L_C_ = std::make_shared<Transform>();
+  std::shared_ptr<Camera> color_camera_ = std::make_shared<Camera>();
+  std::shared_ptr<DepthImage> depth_frame_ =
+      std::make_shared<DepthImage>(MemoryType::kDevice);
+  std::shared_ptr<ColorImage> color_frame_ =
+      std::make_shared<ColorImage>(MemoryType::kDevice);
+  std::shared_ptr<const SerializedMeshLayer> serialized_mesh_;
 };
 
 }  //  namespace nvblox

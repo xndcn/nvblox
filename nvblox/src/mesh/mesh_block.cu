@@ -24,10 +24,10 @@ MeshBlock::MeshBlock(MemoryType memory_type)
       triangles(memory_type) {}
 
 void MeshBlock::clear() {
-  vertices.clearNoDealloc();
-  normals.clearNoDealloc();
-  triangles.clearNoDealloc();
-  colors.clearNoDealloc();
+  vertices.clearNoDeallocate();
+  normals.clearNoDeallocate();
+  triangles.clearNoDeallocate();
+  colors.clearNoDeallocate();
 }
 
 MeshBlock::Ptr MeshBlock::allocate(MemoryType memory_type) {
@@ -41,22 +41,16 @@ MeshBlock::Ptr MeshBlock::allocateAsync(MemoryType memory_type,
 
 size_t MeshBlock::size() const { return vertices.size(); }
 
-size_t MeshBlock::sizeInBytes() const {
-  return vertices.size() * sizeof(Vector3f) +  // NOLINT
-         normals.size() * sizeof(Vector3f) +   // NOLINT
-         colors.size() * sizeof(Color) +       // NOLINT
-         triangles.size() * sizeof(int);
-}
-
 size_t MeshBlock::capacity() const { return vertices.capacity(); }
 
-void MeshBlock::expandColorsToMatchVertices() {
-  colors.reserve(vertices.capacity());
-  colors.resize(vertices.size());
+void MeshBlock::expandColorsToMatchVerticesAsync(
+    const CudaStream& cuda_stream) {
+  colors.reserveAsync(vertices.capacity(), cuda_stream);
+  colors.resizeAsync(vertices.size(), cuda_stream);
 }
 
 void MeshBlock::copyFromAsync(const MeshBlock& other,
-                              const CudaStream cuda_stream) {
+                              const CudaStream& cuda_stream) {
   vertices.copyFromAsync(other.vertices, cuda_stream);
   normals.copyFromAsync(other.normals, cuda_stream);
   colors.copyFromAsync(other.colors, cuda_stream);
@@ -77,6 +71,13 @@ CudaMeshBlock::CudaMeshBlock(MeshBlock* block) {
 
   vertices_size = block->vertices.size();
   triangles_size = block->triangles.size();
+}
+
+size_t sizeInBytes(const MeshBlock* mesh_block) {
+  return mesh_block->vertices.size() * sizeof(Vector3f) +  // NOLINT
+         mesh_block->normals.size() * sizeof(Vector3f) +   // NOLINT
+         mesh_block->colors.size() * sizeof(Color) +       // NOLINT
+         mesh_block->triangles.size() * sizeof(int);
 }
 
 }  // namespace nvblox

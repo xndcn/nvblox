@@ -19,8 +19,8 @@ limitations under the License.
 
 namespace nvblox {
 
-void check_cuda(cudaError_t result, char const* const func,
-                const char* const file, int const line) {
+void check_cuda_error_value(cudaError_t result, char const* const func,
+                            const char* const file, int const line) {
   if (result) {
     std::cerr << "CUDA error = " << static_cast<unsigned int>(result) << " at "
               << file << ":" << line << " '" << func
@@ -31,8 +31,8 @@ void check_cuda(cudaError_t result, char const* const func,
   }
 }
 
-void check_npp(NppStatus result, char const* const func, const char* const file,
-               int const line) {
+void check_npp_error_value(NppStatus result, char const* const func,
+                           const char* const file, int const line) {
   if (result) {
     std::cerr << "NPP error = " << result << " at " << file << ":" << line
               << " '" << func << ".\n";

@@ -42,13 +42,13 @@ bool Serializer::open(const std::string& filename,
 }
 
 LayerCake Serializer::loadLayerCake(MemoryType memory_type,
-                                    const CudaStream cuda_stream) {
+                                    const CudaStream& cuda_stream) {
   // Get all the layers that are in here.
   std::vector<std::string> layer_names;
   getLayerNames(&layer_names);
 
   using TypeIndexAndLayerPtr =
-      std::pair<std::type_index, std::unique_ptr<BaseLayer>>;
+      std::pair<std::type_index, std::shared_ptr<BaseLayer>>;
 
   std::vector<TypeIndexAndLayerPtr> layers;
   float voxel_size = 0.0f;
@@ -74,7 +74,7 @@ LayerCake Serializer::loadLayerCake(MemoryType memory_type,
     getLayerParameters(layer_name, &layer_params);
 
     // Create the layer object.
-    std::unique_ptr<BaseLayer> layer;
+    std::shared_ptr<BaseLayer> layer;
     layer = layer_functions.construct_layer(memory_type, layer_params);
 
     // Populate the layer with bloxxx.
@@ -113,8 +113,8 @@ LayerCake Serializer::loadLayerCake(MemoryType memory_type,
 }
 
 bool Serializer::writeLayerCake(const LayerCake& cake,
-                                const CudaStream cuda_stream) {
-  const std::unordered_map<std::type_index, std::unique_ptr<BaseLayer>>&
+                                const CudaStream& cuda_stream) {
+  const std::unordered_map<std::type_index, std::shared_ptr<BaseLayer>>&
       layer_map = cake.get_layers();
 
   // For each layer, figure out the type, then serialize the parameters, then

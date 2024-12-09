@@ -21,65 +21,99 @@ limitations under the License.
 
 namespace nvblox {
 
-__host__ __device__ inline float voxelSizeToBlockSize(const float voxel_size) {
-  return voxel_size * VoxelBlock<bool>::kVoxelsPerSide;
+constexpr float voxelSizeToBlockSize(const float voxel_size_m) {
+  return voxel_size_m * VoxelBlock<bool>::kVoxelsPerSide;
 }
 
-__host__ __device__ inline float blockSizeToVoxelSize(const float block_size) {
+constexpr float blockSizeToVoxelSize(const float block_size_m) {
   constexpr float kVoxelsPerSideInv = 1.0f / VoxelBlock<bool>::kVoxelsPerSide;
-  return block_size * kVoxelsPerSideInv;
+  return block_size_m * kVoxelsPerSideInv;
 }
 
-Index3D getBlockIndexFromPositionInLayer(const float block_size,
+Index3D getBlockIndexFromPositionInLayer(const float block_size_m,
                                          const Vector3f& position) {
-  Eigen::Vector3i index = (position / block_size).array().floor().cast<int>();
+  Eigen::Vector3i index = (position / block_size_m).array().floor().cast<int>();
   return Index3D(index.x(), index.y(), index.z());
 }
 
-void getBlockAndVoxelIndexFromPositionInLayer(const float block_size,
+void getBlockAndVoxelIndexFromPositionInLayer(const float block_size_m,
                                               const Vector3f& position,
                                               Index3D* block_idx,
                                               Index3D* voxel_idx) {
   constexpr int kVoxelsPerSideMinusOne = VoxelBlock<bool>::kVoxelsPerSide - 1;
-  const float voxel_size_inv = 1.0 / blockSizeToVoxelSize(block_size);
-  *block_idx = (position / block_size).array().floor().cast<int>();
+  const float voxel_size_m_inv = 1.0 / blockSizeToVoxelSize(block_size_m);
+  *block_idx = (position / block_size_m).array().floor().cast<int>();
   *voxel_idx =
-      ((position - block_size * block_idx->cast<float>()) * voxel_size_inv)
+      ((position - block_size_m * block_idx->cast<float>()) * voxel_size_m_inv)
           .array()
           .cast<int>()
           .min(kVoxelsPerSideMinusOne);
 }
 
-Vector3f getPositionFromBlockIndexAndVoxelIndex(const float block_size,
+Vector3f getPositionFromBlockIndexAndVoxelIndex(const float block_size_m,
                                                 const Index3D& block_index,
                                                 const Index3D& voxel_index) {
-  const float voxel_size = blockSizeToVoxelSize(block_size);
-  return Vector3f(block_size * block_index.cast<float>() +
-                  voxel_size * voxel_index.cast<float>());
+  const float voxel_size_m = blockSizeToVoxelSize(block_size_m);
+  return Vector3f(block_size_m * block_index.cast<float>() +
+                  voxel_size_m * voxel_index.cast<float>());
 }
 
-Vector3f getPositionFromBlockIndex(const float block_size,
+Vector3f getPositionFromBlockIndex(const float block_size_m,
                                    const Index3D& block_index) {
   // This is pretty trivial, huh.
-  return Vector3f(block_size * block_index.cast<float>());
+  return Vector3f(block_size_m * block_index.cast<float>());
 }
 
-Vector3f getCenterPositionFromBlockIndex(const float block_size,
+Vector3f getCenterPositionFromBlockIndex(const float block_size_m,
                                          const Index3D& block_index) {
   // This is pretty trivial, huh.
-  return Vector3f(block_size * (block_index.cast<float>().array() + 0.5f));
+  return Vector3f(block_size_m * (block_index.cast<float>().array() + 0.5f));
 }
 
 Vector3f getCenterPositionFromBlockIndexAndVoxelIndex(
-    const float block_size, const Index3D& block_index,
+    const float block_size_m, const Index3D& block_index,
     const Index3D& voxel_index) {
   constexpr float kHalfVoxelsPerSideInv =
       0.5f / VoxelBlock<bool>::kVoxelsPerSide;
-  const float half_voxel_size = block_size * kHalfVoxelsPerSideInv;
+  const float half_voxel_size_m = block_size_m * kHalfVoxelsPerSideInv;
 
-  return getPositionFromBlockIndexAndVoxelIndex(block_size, block_index,
+  return getPositionFromBlockIndexAndVoxelIndex(block_size_m, block_index,
                                                 voxel_index) +
-         Vector3f(half_voxel_size, half_voxel_size, half_voxel_size);
+         Vector3f(half_voxel_size_m, half_voxel_size_m, half_voxel_size_m);
+}
+
+// 2D Indexing
+Vector2f get2DPositionFromBlockIndexAndVoxelIndex(const float block_size_m,
+                                                  const Index2D& block_index,
+                                                  const Index2D& voxel_index) {
+  const float voxel_size_m = blockSizeToVoxelSize(block_size_m);
+  return Vector2f(block_size_m * block_index.cast<float>() +
+                  voxel_size_m * voxel_index.cast<float>());
+}
+
+Vector2f getCenter2DPositionFromBlockIndexAndVoxelIndex(
+    const float block_size_m, const Index2D& block_2d_index,
+    const Index2D& voxel_2d_index) {
+  constexpr float kHalfVoxelsPerSideInv =
+      0.5f / VoxelBlock<bool>::kVoxelsPerSide;
+  const float half_voxel_size_m = block_size_m * kHalfVoxelsPerSideInv;
+
+  return get2DPositionFromBlockIndexAndVoxelIndex(block_size_m, block_2d_index,
+                                                  voxel_2d_index) +
+         Vector2f(half_voxel_size_m, half_voxel_size_m);
+}
+
+// 1D indexing
+std::pair<int, int> getBlockAndVoxelIndexFrom1DPositionInLayer(
+    const float block_size_m, float p) {
+  constexpr int kVoxelsPerSideMinusOne = VoxelBlock<bool>::kVoxelsPerSide - 1;
+  const float voxel_size_m_inv = 1.0 / blockSizeToVoxelSize(block_size_m);
+  const int block_idx = static_cast<int>(std::floor(p / block_size_m));
+  const int voxel_idx = std::min(
+      static_cast<int>((p - block_size_m * static_cast<float>(block_idx)) *
+                       voxel_size_m_inv),
+      kVoxelsPerSideMinusOne);
+  return {block_idx, voxel_idx};
 }
 
 }  // namespace nvblox

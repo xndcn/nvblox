@@ -17,7 +17,20 @@ limitations under the License.
 
 namespace nvblox {
 
-Mesh Mesh::fromLayer(const BlockLayer<MeshBlock>& layer) {
+// template <typename T>
+// void expandByFactorIfTooSmallAsync(const size_t required_size,
+//                                    const float expansion_factor,
+//                                    unified_vector<T>* vec,
+//                                    const CudaStream& stream) {
+//   if (vec->size() < required_size) {
+//     const size_t new_size = static_cast<size_t>(
+//         expansion_factor * static_cast<float>(required_size));
+//     vec->reserveAsync(new_size, stream);
+//   }
+// }
+
+Mesh Mesh::fromLayer(const BlockLayer<MeshBlock>& layer,
+                     const CudaStream& cuda_stream) {
   Mesh mesh;
 
   // Keep track of the vertex index.
@@ -26,24 +39,38 @@ Mesh Mesh::fromLayer(const BlockLayer<MeshBlock>& layer) {
   // Iterate over every block in the layer.
   const std::vector<Index3D> indices = layer.getAllBlockIndices();
 
+  // Allocate Staging areas up-front
+  unified_vector<Vector3f> vertices(MemoryType::kHost);
+  unified_vector<Vector3f> normals(MemoryType::kHost);
+  unified_vector<Color> colors(MemoryType::kHost);
+  unified_vector<int> triangles(MemoryType::kHost);
+
+  // Loop over mesh blocks bringing them back from the GPU 1 by 1.
   for (const Index3D& index : indices) {
     MeshBlock::ConstPtr block = layer.getBlockAtIndex(index);
 
-    // Copy over.
-    unified_vector<Vector3f> vertices;
-    vertices.copyFrom(block->vertices);
+    // Reduce the frequency of allocation by expanding by some factor (1.5)
+    expandBuffersIfRequired(block->vertices.size(), cuda_stream, &vertices);
+    expandBuffersIfRequired(block->normals.size(), cuda_stream, &normals);
+    expandBuffersIfRequired(block->colors.size(), cuda_stream, &colors);
+    expandBuffersIfRequired(block->triangles.size(), cuda_stream, &triangles);
+
+    // First copy everything from GPU
+    vertices.copyFromAsync(block->vertices, cuda_stream);
+    normals.copyFromAsync(block->normals, cuda_stream);
+    colors.copyFromAsync(block->colors, cuda_stream);
+    triangles.copyFromAsync(block->triangles, cuda_stream);
+    cuda_stream.synchronize();
+
+    // Append to the mesh elements
     mesh.vertices.resize(mesh.vertices.size() + vertices.size());
     std::copy(vertices.begin(), vertices.end(),
               mesh.vertices.begin() + next_index);
 
-    unified_vector<Vector3f> normals;
-    normals.copyFrom(block->normals);
     mesh.normals.resize(mesh.normals.size() + normals.size());
     std::copy(normals.begin(), normals.end(),
               mesh.normals.begin() + next_index);
 
-    unified_vector<Color> colors;
-    colors.copyFrom(block->colors);
     mesh.colors.resize(mesh.colors.size() + colors.size());
     std::copy(colors.begin(), colors.end(), mesh.colors.begin() + next_index);
 
@@ -53,9 +80,6 @@ Mesh Mesh::fromLayer(const BlockLayer<MeshBlock>& layer) {
     CHECK((vertices.size() == normals.size()) || (normals.size() == 0));
     CHECK((vertices.size() == vertices.size()) || (colors.size() == 0));
 
-    // Copy over the triangles.
-    unified_vector<int> triangles;
-    triangles.copyFrom(block->triangles);
     std::vector<int> triangle_indices(triangles.size());
     // Increment all triangle indices.
     std::transform(triangles.begin(), triangles.end(), triangle_indices.begin(),

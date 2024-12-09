@@ -179,4 +179,5 @@ bool checkBlockAllConstant(const ColorBlock::Ptr block, ColorVoxel voxel_cpu) {
 }
 
 }  // namespace test_utils
+
 }  // namespace nvblox

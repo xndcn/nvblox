@@ -70,7 +70,7 @@ class LayerSerializerGpuInternal {
                       std::function<std::pair<const T*, int>(
                           const typename LayerType::BlockType* block)>
                           get_data_and_size,
-                      const CudaStream cuda_stream);
+                      const CudaStream& cuda_stream);
 
  private:
   // Scratch data. Pointers to vectors that should be serialized

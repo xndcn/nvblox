@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 #include "nvblox/sensors/camera.h"
+#include "nvblox/geometry/transforms.h"
 
 namespace nvblox {
 
@@ -22,24 +23,18 @@ std::ostream& operator<<(std::ostream& os, const Camera& camera) {
      << "\tfv: " << camera.fv() << "\n"
      << "\tcu: " << camera.cu() << "\n"
      << "\tcv: " << camera.cv() << "\n"
-     << "\twidith: " << camera.width() << "\n"
+     << "\twidth: " << camera.width() << "\n"
      << "\theight: " << camera.height() << "\n";
   return os;
 }
 
-bool camerasAreEquivalent(const Camera& camera_1, const Camera& camera_2,
-                          const Transform& T_L_C1, const Transform& T_L_C2) {
+bool areCamerasEqual(const Camera& camera_1, const Camera& camera_2,
+                     const Transform& T_L_C1, const Transform& T_L_C2) {
   // Check that the cameras have the same extrinsics
-  bool same_extrinsics = true;
-  const Transform T_C1_C2 = T_L_C1.inverse() * T_L_C2;
-  const float distance_between_cameras_m = T_C1_C2.translation().norm();
-  const float angular_between_cameras_rad =
-      Eigen::AngleAxisf(T_C1_C2.rotation()).angle();
-  same_extrinsics &= distance_between_cameras_m <= 0.001f;
-  same_extrinsics &= std::abs(angular_between_cameras_rad) <= 0.01f;
-  if (!same_extrinsics) {
-    LOG(ERROR) << "The cameras do not have the same extrinsics.";
-  }
+  constexpr float kTranslationToleranceM = 0.001f;
+  constexpr float kAngularToleranceDeg = 0.1f;
+  const bool same_extrinsics = arePosesClose(
+      T_L_C1, T_L_C2, kTranslationToleranceM, kAngularToleranceDeg);
 
   // Check that the cameras have the same intrinsics
   bool same_intrinsics = true;
@@ -49,9 +44,6 @@ bool camerasAreEquivalent(const Camera& camera_1, const Camera& camera_2,
   same_intrinsics &= std::abs(camera_1.cv() - camera_2.cv()) <= 0.1;
   same_intrinsics &= camera_1.width() == camera_2.width();
   same_intrinsics &= camera_1.height() == camera_2.height();
-  if (!same_intrinsics) {
-    LOG(ERROR) << "The cameras do not have the same intrinsics.";
-  }
 
   return same_extrinsics && same_intrinsics;
 }

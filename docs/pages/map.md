@@ -1,7 +1,7 @@
 # Map Overview
 We implement a hierarchical sparse voxel grid for storing data. At the top level we have the ``LayerCake``, which contains several layers, each of which contains a different type of mapped quantity (eg TSDF and ESDF). A layer is a collection of sparsely allocated blocks. Each block is in charge of mapping a cubular small region of space. Most blocks are composed of many voxels, each of which captures a single value of the mapped quantity (eg the TSDF).
 
-<img src="map_structure.png" alt="Map Structure" width="400">
+<img src="../images/map_structure.png" alt="Map Structure" width="400">
 
 
 The API for the various classes implementing a map nvblox map:
