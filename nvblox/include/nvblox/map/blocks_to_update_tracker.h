@@ -23,10 +23,9 @@ limitations under the License.
 namespace nvblox {
 
 /// @brief Types of blocks being tracked.
-enum class BlocksToUpdateType { kEsdf, kMesh, kFreespace };
+enum class BlocksToUpdateType { kEsdf, kMesh, kFreespace, kLayerStreamer };
 
-/// @brief Class to keep track of esdf, mesh and freespace blocks that need to
-/// be updated.
+/// @brief Class to keep track of blocks that need to be updated.
 class BlocksToUpdateTracker {
  public:
   BlocksToUpdateTracker(ProjectiveLayerType projective_layer_type)
@@ -40,7 +39,7 @@ class BlocksToUpdateTracker {
   /// @param blocks_to_remove Vector of block indices that don't need an update.
   void removeBlocksToUpdate(const std::vector<Index3D>& blocks_to_remove);
 
-  /// @brief Get the esdf, mesh or freespace blocks that need and update.
+  /// @brief Get the blocks that need update.
   /// @param blocks_to_update_type The type of blocks you want to get the vector
   /// for.
   /// @return Vector of block indices that need an update for the chosen block
@@ -56,11 +55,12 @@ class BlocksToUpdateTracker {
   ProjectiveLayerType projective_layer_type_;
 
   /// These collections keep track of the blocks which need to be updated on
-  /// the next calls to updateMesh(), updateFreespace() upd updateEsdf()
-  /// respectively.
+  /// the next calls to updateFreespace(), updateEsdf(), updateMesh(),
+  /// serializeLayers() respectively.
   Index3DSet esdf_blocks_to_update_;
   Index3DSet mesh_blocks_to_update_;
   Index3DSet freespace_blocks_to_update_;
+  Index3DSet layer_streamer_blocks_to_update_;
 
   // Object to synchronize async functions (initialize to valid)
   mutable std::future<void> future_ = std::async(std::launch::async, []() {});

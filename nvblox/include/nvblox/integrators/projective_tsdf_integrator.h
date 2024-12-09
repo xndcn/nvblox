@@ -45,8 +45,9 @@ class ProjectiveTsdfIntegrator : public ProjectiveIntegrator<TsdfVoxel> {
   /// intergrated.
   /// @param updated_blocks Optional pointer to a vector which will contain the
   /// 3D indices of blocks affected by the integration.
-  void integrateFrame(const DepthImage& depth_frame, const Transform& T_L_C,
-                      const Camera& camera, TsdfLayer* layer,
+  void integrateFrame(const MaskedDepthImageConstView& depth_frame,
+                      const Transform& T_L_C, const Camera& camera,
+                      TsdfLayer* layer,
                       std::vector<Index3D>* updated_blocks = nullptr);
 
   /// Integrates a depth image in to the passed TSDF layer.
@@ -58,8 +59,9 @@ class ProjectiveTsdfIntegrator : public ProjectiveIntegrator<TsdfVoxel> {
   /// intergrated.
   /// @param updated_blocks Optional pointer to a vector which will contain the
   /// 3D indices of blocks affected by the integration.
-  void integrateFrame(const DepthImage& depth_frame, const Transform& T_L_C,
-                      const Lidar& lidar, TsdfLayer* layer,
+  void integrateFrame(const MaskedDepthImageConstView& depth_frame,
+                      const Transform& T_L_C, const Lidar& lidar,
+                      TsdfLayer* layer,
                       std::vector<Index3D>* updated_blocks = nullptr);
 
   /// A parameter getter
@@ -121,6 +123,16 @@ class ProjectiveTsdfIntegrator : public ProjectiveIntegrator<TsdfVoxel> {
       const Vector3f& center, float radius, TsdfLayer* layer,
       std::vector<Index3D>* updated_blocks_ptr = nullptr);
 
+  /// A parameter getter
+  /// The weight of voxels projected into invalid depth pixels (<=0) will be
+  /// multiplied with this number.
+  float invalid_depth_decay_factor() const;
+
+  /// A parameter setter
+  /// See invalid_depth_decay_factor()
+  /// @param invalid_depth_decay_factor The decay factor for invalid depth
+  void invalid_depth_decay_factor(float invalid_depth_decay_factor);
+
   /// Return the parameter tree.
   /// @return the parameter tree
   virtual parameters::ParameterTreeNode getParameterTree(
@@ -150,6 +162,10 @@ class ProjectiveTsdfIntegrator : public ProjectiveIntegrator<TsdfVoxel> {
   // The weight given to unobserved voxels when markUnobservedFreeInsideRadius()
   // is called.
   float marked_unobserved_voxels_weight_ = 0.1f;
+
+  /// Decay factor for invalid depth.
+  float invalid_depth_decay_factor_ =
+      kProjectiveTsdfIntegratorInvalidDepthDecayFactor.default_value;
 };
 
 }  // namespace nvblox

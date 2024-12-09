@@ -27,14 +27,12 @@ enum class DataLoadResult { kSuccess, kBadFrame, kNoMoreData };
 
 class RgbdDataLoaderInterface {
  public:
-  RgbdDataLoaderInterface(
-      std::unique_ptr<ImageLoader<DepthImage>>&& depth_image_loader,
-      std::unique_ptr<ImageLoader<ColorImage>>&& color_image_loader)
-      : depth_image_loader_(std::move(depth_image_loader)),
-        color_image_loader_(std::move(color_image_loader)) {}
+  RgbdDataLoaderInterface() = default;
   virtual ~RgbdDataLoaderInterface() = default;
 
   /// Interface for a function that loads the next frames in a dataset
+  /// This version of the function should be used when the color and depth
+  /// camera are the same.
   ///@param[out] depth_frame_ptr The loaded depth frame.
   ///@param[out] T_L_C_ptr Transform from Camera to the Layer frame.
   ///@param[out] camera_ptr The intrinsic camera model.
@@ -45,11 +43,27 @@ class RgbdDataLoaderInterface {
                                   Camera* camera_ptr,           // NOLINT
                                   ColorImage* color_frame_ptr = nullptr) = 0;
 
- protected:
-  // Objects which do (multithreaded) image loading.
-  std::unique_ptr<ImageLoader<DepthImage>> depth_image_loader_;
-  std::unique_ptr<ImageLoader<ColorImage>> color_image_loader_;
+  /// Interface for a function that loads the next frames in a dataset.
+  /// This is the version of the function for different depth and color cameras.
+  ///@param[out] depth_frame_ptr The loaded depth frame.
+  ///@param[out] T_L_D_ptr Transform from depth camera to the Layer frame.
+  ///@param[out] depth_camera_ptr The intrinsic depth camera model.
+  ///@param[out] color_frame_ptr The loaded color frame.
+  ///@param[out] T_L_C_ptr Transform from color camera to the Layer frame.
+  ///@param[out] color_camera_ptr The intrinsic color camera model.
+  ///@return Whether loading succeeded.
+  virtual DataLoadResult loadNext(DepthImage* depth_frame_ptr,  // NOLINT
+                                  Transform* T_L_D_ptr,         // NOLINT
+                                  Camera* depth_camera_ptr,     // NOLINT
+                                  ColorImage* color_frame_ptr,  // NOLINT
+                                  Transform* T_L_C_ptr,         // NOLINT
+                                  Camera* color_camera_ptr) = 0;
 
+  /// Indicates if the data loader was successfully set up.
+  /// @return True if the DataLoader was successfully set up.
+  bool setup_success() const { return setup_success_; }
+
+ protected:
   // Indicates if the dataset loader was constructed in a state that was good to
   // go. Initializes to true, so child class constructors indicate failure by
   // setting it to false;

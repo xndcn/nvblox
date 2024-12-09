@@ -46,19 +46,21 @@ unified_vector<T>::unified_vector(MemoryType memory_type)
 }
 
 template <typename T>
-unified_vector<T>::unified_vector(size_t size, MemoryType memory_type)
+unified_vector<T>::unified_vector(size_t size, MemoryType memory_type,
+                                  const CudaStream& cuda_stream)
     : unified_vector(memory_type) {
-  resize(size);
+  resizeAsync(size, cuda_stream);
 }
 
 template <typename T>
 unified_vector<T>::unified_vector(size_t size, const T& initial,
-                                  MemoryType memory_type)
+                                  MemoryType memory_type,
+                                  const CudaStream& cuda_stream)
     : unified_vector(memory_type) {
   CHECK_NE(static_cast<int>(memory_type_),
            static_cast<int>(MemoryType::kDevice))
       << "Can't set initial values for device memory. Use copy instead.";
-  resize(size);
+  resizeAsync(size, cuda_stream);
   for (size_t i = 0; i < size; i++) {
     buffer_[i] = initial;
   }
@@ -78,7 +80,7 @@ unified_vector<T>::unified_vector(unified_vector<T>&& other)
 
 template <typename T>
 unified_vector<T>::~unified_vector() {
-  clear();
+  clearAndDeallocate();
 }
 
 // Operators
@@ -95,10 +97,11 @@ const T& unified_vector<T>::operator[](size_t index) const {
 // Move assignment
 template <typename T>
 unified_vector<T>& unified_vector<T>::operator=(unified_vector<T>&& other) {
-  clear();
+  clearAndDeallocate();
   buffer_ = other.buffer_;
   buffer_size_ = other.buffer_size_;
   buffer_capacity_ = other.buffer_capacity_;
+  memory_type_ = other.memory_type_;
   other.buffer_ = nullptr;
   other.buffer_size_ = 0;
   other.buffer_capacity_ = 0;
@@ -108,24 +111,33 @@ unified_vector<T>& unified_vector<T>::operator=(unified_vector<T>&& other) {
 template <typename T>
 template <typename OtherVectorType>
 void unified_vector<T>::copyFromAsync(const OtherVectorType& other,
-                                      const CudaStream cuda_stream) {
-  resizeAsync(other.size(), cuda_stream);
-  if (other.data() != nullptr) {
-    checkCudaErrors(cudaMemcpyAsync(buffer_, other.data(),
-                                    sizeof(T) * other.size(), cudaMemcpyDefault,
-                                    cuda_stream));
+                                      const CudaStream& cuda_stream) {
+  copyFromAsync(other.data(), other.size(), cuda_stream);
+}
+
+template <typename T>
+void unified_vector<T>::copyFromAsync(const T_noextent* const raw_ptr,
+                                      const size_t num_elements,
+                                      const CudaStream& cuda_stream) {
+  resizeAsync(num_elements, cuda_stream);
+  if (raw_ptr != nullptr) {
+    checkCudaErrors(cudaMemcpyAsync(buffer_, raw_ptr, sizeof(T) * num_elements,
+                                    cudaMemcpyDefault, cuda_stream));
   }
 }
 
 template <typename T>
-template <typename OtherVectorType>
-void unified_vector<T>::copyFrom(const OtherVectorType& other) {
-  copyFromAsync(other, CudaStreamOwning());
+void unified_vector<T>::copyToAsync(T_noextent* raw_ptr,
+                                    const CudaStream& cuda_stream) const {
+  CHECK(raw_ptr != nullptr);
+  checkCudaErrors(cudaMemcpyAsync(raw_ptr, this->data(),
+                                  sizeof(T_noextent) * buffer_size_,
+                                  cudaMemcpyDefault, cuda_stream));
 }
 
 template <typename T>
 std::vector<T> unified_vector<T>::toVectorAsync(
-    const CudaStream cuda_stream) const {
+    const CudaStream& cuda_stream) const {
   static_assert(!std::is_same<T, bool>::value);
 
   if (buffer_ == nullptr || buffer_size_ == 0) {
@@ -138,15 +150,10 @@ std::vector<T> unified_vector<T>::toVectorAsync(
   return vect;
 }
 
-template <typename T>
-std::vector<T> unified_vector<T>::toVector() const {
-  return toVectorAsync(CudaStreamOwning());
-}
-
 // Specialization for bool
 template <>
 inline std::vector<bool> unified_vector<bool>::toVectorAsync(
-    const CudaStream cuda_stream) const {
+    const CudaStream& cuda_stream) const {
   // The memory layout of std::vector<bool> is different so we have to first
   // copy to an intermediate buffer.
   CHECK(buffer_ != nullptr);
@@ -160,12 +167,6 @@ inline std::vector<bool> unified_vector<bool>::toVectorAsync(
     vect[i] = bool_buffer[i];
   }
   return vect;
-}
-
-// Specialization for bool
-template <>
-inline std::vector<bool> unified_vector<bool>::toVector() const {
-  return toVectorAsync(CudaStreamOwning());
 }
 
 // Get those raw pointers.
@@ -219,7 +220,7 @@ bool unified_vector<T>::empty() const {
 // Changing the size.
 template <typename T>
 void unified_vector<T>::reserveAsync(size_t capacity,
-                                     const CudaStream cuda_stream) {
+                                     const CudaStream& cuda_stream) {
   if (buffer_capacity_ < capacity) {
     // Create a new buffer.
     T* new_buffer = nullptr;
@@ -257,14 +258,8 @@ void unified_vector<T>::reserveAsync(size_t capacity,
 }
 
 template <typename T>
-void unified_vector<T>::reserve(size_t capacity) {
-  if (buffer_capacity_ < capacity) {
-    reserveAsync(capacity, CudaStreamOwning());
-  }
-}
-
-template <typename T>
-void unified_vector<T>::resizeAsync(size_t size, const CudaStream cuda_stream) {
+void unified_vector<T>::resizeAsync(size_t size,
+                                    const CudaStream& cuda_stream) {
   // ABSOLUTE no-op.
   if (buffer_size_ == size) {
     return;
@@ -275,21 +270,12 @@ void unified_vector<T>::resizeAsync(size_t size, const CudaStream cuda_stream) {
 }
 
 template <typename T>
-void unified_vector<T>::resize(size_t size) {
-  if (buffer_capacity_ < size) {
-    resizeAsync(size, CudaStreamOwning());
-  } else {
-    buffer_size_ = size;
-  }
-}
-
-template <typename T>
-void unified_vector<T>::clearNoDealloc() {
+void unified_vector<T>::clearNoDeallocate() {
   buffer_size_ = 0;
 }
 
 template <typename T>
-void unified_vector<T>::clear() {
+void unified_vector<T>::clearAndDeallocate() {
   if (buffer_ != nullptr) {
     if (memory_type_ == MemoryType::kHost) {
       checkCudaErrors(cudaFreeHost(reinterpret_cast<void*>(buffer_)));
@@ -303,19 +289,21 @@ void unified_vector<T>::clear() {
 }
 
 template <typename T>
-void unified_vector<T>::push_back(const T& value) {
+void unified_vector<T>::push_back(const T& value,
+                                  const CudaStream& cuda_stream) {
   CHECK_NE(static_cast<int>(memory_type_),
            static_cast<int>(MemoryType::kDevice))
       << "Can't use push_back on device memory.";
 
   if (buffer_capacity_ < buffer_size_ + 1) {
     // Do the vector thing and reserve double.
-    reserve(std::max(buffer_size_ * 2, buffer_size_ + 1));
+    reserveAsync(std::max(buffer_size_ * 2, buffer_size_ + 1), cuda_stream);
+    cuda_stream.synchronize();
   }
   // Add the new value to the end.
   buffer_[buffer_size_] = value;
   buffer_size_++;
-}
+}  // namespace nvblox
 
 template <typename T>
 typename unified_vector<T>::iterator unified_vector<T>::begin() {
@@ -338,12 +326,7 @@ typename unified_vector<T>::const_iterator unified_vector<T>::cend() const {
 }
 
 template <typename T>
-void unified_vector<T>::setZero() {
-  setZeroAsync(CudaStreamOwning());
-}
-
-template <typename T>
-void unified_vector<T>::setZeroAsync(const CudaStream cuda_stream) {
+void unified_vector<T>::setZeroAsync(const CudaStream& cuda_stream) {
   // It is safe to use cudaMemset since the memory is ALWAYS allocated with
   // cudaMalloc.
   CHECK(buffer_ != nullptr);
@@ -351,13 +334,18 @@ void unified_vector<T>::setZeroAsync(const CudaStream cuda_stream) {
       cudaMemsetAsync(buffer_, 0, buffer_size_ * sizeof(T), cuda_stream));
 }
 
-template <typename T>
-void unified_vector<T>::setAsync(int val, const CudaStream cuda_stream) {
-  // It is safe to use cudaMemset since the memory is ALWAYS allocated with
-  // cudaMalloc.
-  CHECK(buffer_ != nullptr);
-  checkCudaErrors(
-      cudaMemsetAsync(buffer_, val, buffer_size_ * sizeof(T), cuda_stream));
+template <class... Args>
+void expandBuffersIfRequired(size_t required_min_size,
+                             const CudaStream& cuda_stream, Args... args) {
+  static_assert((std::is_pointer<Args>::value && ...));
+  const bool at_least_one_vector_smaller =
+      (... || (args->capacity() < required_min_size));
+  if (at_least_one_vector_smaller) {
+    constexpr float kBufferExpansionFactor = 1.5f;
+    const int new_size =
+        static_cast<int>(kBufferExpansionFactor * required_min_size);
+    (args->reserveAsync(new_size, cuda_stream), ...);
+  }
 }
 
 }  // namespace nvblox

@@ -70,7 +70,7 @@ __global__ void fill3DGridWithConstantKernel(
 }
 
 void fillVectorWithConstant(float value, unified_vector<float>* vec_ptr) {
-  constexpr int kMaxThreadBlockSize = 512;
+  constexpr size_t kMaxThreadBlockSize = 512;
   CHECK_LT(vec_ptr->size(), kMaxThreadBlockSize);
   // kernel
   int num_thread_blocks = 1;
@@ -82,7 +82,7 @@ void fillVectorWithConstant(float value, unified_vector<float>* vec_ptr) {
 }
 
 void fillVectorWithConstant(int value, unified_vector<int>* vec_ptr) {
-  constexpr int kMaxThreadBlockSize = 512;
+  constexpr size_t kMaxThreadBlockSize = 512;
   CHECK_LT(vec_ptr->size(), kMaxThreadBlockSize);
   // kernel
   int num_thread_blocks = 1;
@@ -94,7 +94,7 @@ void fillVectorWithConstant(int value, unified_vector<int>* vec_ptr) {
 }
 
 void fillWithConstant(float value, size_t num_elems, float* vec_ptr) {
-  constexpr int kMaxThreadBlockSize = 512;
+  constexpr size_t kMaxThreadBlockSize = 512;
   CHECK_LT(num_elems, kMaxThreadBlockSize);
   // kernel
   int num_thread_blocks = 1;
@@ -106,7 +106,7 @@ void fillWithConstant(float value, size_t num_elems, float* vec_ptr) {
 }
 
 void fillWithConstant(int value, size_t num_elems, int* vec_ptr) {
-  constexpr int kMaxThreadBlockSize = 512;
+  constexpr size_t kMaxThreadBlockSize = 512;
   CHECK_LT(num_elems, kMaxThreadBlockSize);
   // kernel
   int num_thread_blocks = 1;

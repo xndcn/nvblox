@@ -28,25 +28,35 @@ BlockMemoryPool<BlockType>::BlockMemoryPool(const MemoryType memory_type,
 
 template <class BlockType>
 typename BlockType::Ptr BlockMemoryPool<BlockType>::popBlock(
-    const CudaStream cuda_stream) {
+    const CudaStream& cuda_stream) {
+  // Zero blocks that are being re-used
+  if (!recycled_blocks_.empty()) {
+    initializeBlocksAsync<BlockType>(recycled_blocks_, cuda_stream,
+                                     memory_type_);
+    recycled_blocks_.clearNoDeallocate();
+    cuda_stream.synchronize();
+  }
+
+  // Expand if needed
   if (blocks_.size() == 0) {
     expand(kExpansionFactor * num_allocated_blocks_, cuda_stream);
   }
+
+  // Return a ready-to-use block
   typename BlockType::Ptr popped = blocks_.top();
-  BlockType::initAsync(popped.get(), memory_type_, cuda_stream);
   blocks_.pop();
   return popped;
 }
 
 template <class BlockType>
-void BlockMemoryPool<BlockType>::pushBlock(
-    const typename BlockType::Ptr block) {
+void BlockMemoryPool<BlockType>::pushBlock(typename BlockType::Ptr block) {
+  recycled_blocks_.push_back(block.get());
   blocks_.push(block);
 }
 
 template <class BlockType>
 void BlockMemoryPool<BlockType>::expand(const size_t num_blocks_to_allocate,
-                                        const CudaStream cuda_stream) {
+                                        const CudaStream& cuda_stream) {
   for (size_t i = 0; i < num_blocks_to_allocate; ++i) {
     blocks_.push(BlockType::allocateAsync(memory_type_, cuda_stream));
   }
@@ -57,5 +67,4 @@ void BlockMemoryPool<BlockType>::expand(const size_t num_blocks_to_allocate,
 
   cuda_stream.synchronize();
 }
-
 }  // namespace nvblox

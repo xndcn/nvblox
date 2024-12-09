@@ -47,7 +47,11 @@ void setImageConstantOnCpu(const float value, DepthImage* depth_frame_ptr) {
   // Set everything to 1.0 through one access method and check through the other
   for (int row_idx = 0; row_idx < depth_frame_ptr->rows(); row_idx++) {
     for (int col_idx = 0; col_idx < depth_frame_ptr->cols(); col_idx++) {
-      (*depth_frame_ptr)(row_idx, col_idx) = value;
+      for (int element_idx = 0;
+           element_idx < depth_frame_ptr->num_elements_per_pixel();
+           element_idx++) {
+        (*depth_frame_ptr)(row_idx, col_idx) = value;
+      }
     }
   }
 }
@@ -95,13 +99,15 @@ TEST_F(DepthImageTest, DeviceReduction) {
   // Reduction on the GPU
   const float max = image::maxGPU(depth_frame_, CudaStreamOwning());
   const float min = image::minGPU(depth_frame_, CudaStreamOwning());
-  const auto minmax = image::minmaxGPU(depth_frame_, CudaStreamOwning());
+  float minmax_min;
+  float minmax_max;
+  image::minmaxGPU(depth_frame_, &minmax_min, &minmax_max, CudaStreamOwning());
 
   // Check on the CPU
   EXPECT_EQ(max, kMaxValue);
   EXPECT_EQ(min, kMinValue);
-  EXPECT_EQ(minmax.first, kMinValue);
-  EXPECT_EQ(minmax.second, kMaxValue);
+  EXPECT_EQ(minmax_min, kMinValue);
+  EXPECT_EQ(minmax_max, kMaxValue);
 }
 
 TEST_F(DepthImageTest, GpuOperation) {
@@ -392,7 +398,7 @@ TEST_F(DepthImageTest, SetZero) {
     EXPECT_EQ(image(i), i);
   }
 
-  image.setZero();
+  image.setZeroAsync(CudaStreamOwning());
 
   for (int i = 0; i < 6; i++) {
     EXPECT_EQ(image(i), 0);
@@ -488,6 +494,32 @@ TEST_F(DepthImageTest, CopyToBuffer) {
   EXPECT_EQ(image_2(0, 1), 1);
   EXPECT_EQ(image_2(1, 0), 0);
   EXPECT_EQ(image_2(1, 1), 1);
+}
+
+TEST_F(DepthImageTest, ResizeLarger) {
+  const size_t kRows = rows_ * 2;
+  const size_t kCols = cols_ * 2;
+
+  const float* old_data_ptr = depth_frame_.dataPtr();
+  depth_frame_.resizeAsync(kRows, kCols, CudaStreamOwning());
+  EXPECT_EQ(depth_frame_.rows(), kRows);
+  EXPECT_EQ(depth_frame_.cols(), kCols);
+
+  // Expect reallocated buffer when expanding
+  EXPECT_NE(depth_frame_.dataPtr(), old_data_ptr);
+}
+
+TEST_F(DepthImageTest, ResizeSmaller) {
+  const size_t kRows = rows_ / 2;
+  const size_t kCols = cols_ / 2;
+
+  const float* old_data_ptr = depth_frame_.dataPtr();
+  depth_frame_.resizeAsync(kRows, kCols, CudaStreamOwning());
+  EXPECT_EQ(depth_frame_.rows(), kRows);
+  EXPECT_EQ(depth_frame_.cols(), kCols);
+
+  // Don't expect reallocated buffer when shrinking
+  EXPECT_EQ(depth_frame_.dataPtr(), old_data_ptr);
 }
 
 int main(int argc, char** argv) {

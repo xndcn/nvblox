@@ -16,11 +16,11 @@ limitations under the License.
 #pragma once
 
 #include "nvblox/core/parameter_tree.h"
-#include "nvblox/integrators/mesh_integrator_params.h"
 #include "nvblox/map/common_names.h"
 #include "nvblox/map/layer.h"
 #include "nvblox/mesh/internal/marching_cubes.h"
 #include "nvblox/mesh/mesh_block.h"
+#include "nvblox/mesh/mesh_integrator_params.h"
 namespace nvblox {
 
 /// Class to integrate TSDF data into a mesh using marching cubes.
@@ -62,10 +62,11 @@ class MeshIntegrator {
   void colorMeshGPU(const ColorLayer& color_layer,
                     const std::vector<Index3D>& block_indices,
                     MeshLayer* mesh_layer);
-  void colorMeshCPU(const ColorLayer& color_layer, MeshLayer* mesh_layer);
+  void colorMeshCPU(const ColorLayer& color_layer, MeshLayer* mesh_layer,
+                    const CudaStream& cuda_stream);
   void colorMeshCPU(const ColorLayer& color_layer,
                     const std::vector<Index3D>& block_indices,
-                    MeshLayer* mesh_layer);
+                    MeshLayer* mesh_layer, const CudaStream& cuda_stream);
 
   float min_weight() const { return min_weight_; }
   void min_weight(float min_weight) { min_weight_ = min_weight; }

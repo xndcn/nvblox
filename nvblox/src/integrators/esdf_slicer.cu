@@ -183,8 +183,8 @@ void EsdfSlicer::populateSliceFromLayer(const EsdfLayer& layer,
   const float voxel_size = layer.voxel_size();
 
   // Create a GPU hash of the ESDF.
-  GPULayerView<EsdfBlock> gpu_layer_view =
-      layer.getGpuLayerViewAsync(*cuda_stream_);
+  GPULayerView<EsdfBlock>& gpu_layer_view =
+      layer.getGpuLayerView(*cuda_stream_);
 
   // Pass in the GPU hash and AABB and let the kernel figure it out.
   constexpr int kThreadDim = 16;

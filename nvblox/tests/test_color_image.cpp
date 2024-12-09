@@ -114,15 +114,15 @@ TEST(ColorImageTest, InterpolationNearestNeighbour) {
   EXPECT_EQ(color.r, 0);
   EXPECT_EQ(color.g, 0);
   EXPECT_TRUE(interpolation::interpolate2D(
-      image, Vector2f(0.4, 0.6), &color, InterpolationType::kNearestNeighbor));
+      image, Vector2f(0.4, 1.2), &color, InterpolationType::kNearestNeighbor));
   EXPECT_EQ(color.r, 1);
   EXPECT_EQ(color.g, 0);
   EXPECT_TRUE(interpolation::interpolate2D(
-      image, Vector2f(0.6, 0.4), &color, InterpolationType::kNearestNeighbor));
+      image, Vector2f(1.2, 0.4), &color, InterpolationType::kNearestNeighbor));
   EXPECT_EQ(color.r, 0);
   EXPECT_EQ(color.g, 1);
   EXPECT_TRUE(interpolation::interpolate2D(
-      image, Vector2f(0.6, 0.6), &color, InterpolationType::kNearestNeighbor));
+      image, Vector2f(1.2, 1.2), &color, InterpolationType::kNearestNeighbor));
   EXPECT_EQ(color.r, 1);
   EXPECT_EQ(color.g, 1);
 
@@ -135,11 +135,11 @@ TEST(ColorImageTest, InterpolationNearestNeighbour) {
       interpolation::interpolate2D(image, Vector2f(-0.6, -0.6), &color,
                                    InterpolationType::kNearestNeighbor));
   EXPECT_FALSE(interpolation::interpolate2D(
-      image, Vector2f(1.6, 0.0), &color, InterpolationType::kNearestNeighbor));
+      image, Vector2f(2.1, 0.0), &color, InterpolationType::kNearestNeighbor));
   EXPECT_FALSE(interpolation::interpolate2D(
-      image, Vector2f(0.0, 1.6), &color, InterpolationType::kNearestNeighbor));
+      image, Vector2f(0.0, 2.1), &color, InterpolationType::kNearestNeighbor));
   EXPECT_FALSE(interpolation::interpolate2D(
-      image, Vector2f(1.6, 1.6), &color, InterpolationType::kNearestNeighbor));
+      image, Vector2f(2.1, 2.1), &color, InterpolationType::kNearestNeighbor));
 }
 
 TEST(ColorImageTest, InterpolationLinear) {

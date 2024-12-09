@@ -235,6 +235,64 @@ TEST_F(OccupancyIntegratorTest, MarkUnobservedFree) {
       });
 }
 
+TEST_F(OccupancyIntegratorTest, MaskedDepthPixels) {
+  // Generate a depth image of a sphere
+  constexpr float kSphereRadius = 2.f;
+  constexpr float kSphereZPos = 5.f;
+  constexpr float kMaxDist = kSphereZPos;
+  primitives::Scene scene;
+  scene.addPrimitive(std::make_unique<primitives::Sphere>(
+      Vector3f(0.0f, 0.0f, kSphereZPos), kSphereRadius));
+  DepthImage depth_frame(camera_.height(), camera_.width(),
+                         MemoryType::kUnified);
+  scene.generateDepthImageFromScene(camera_, Transform::Identity(), kMaxDist,
+                                    &depth_frame, kMaxDist);
+
+  // Mask all depth pixels below a threshold.
+  constexpr float kMaskDepthThreshold = kSphereZPos - 0.8 * kSphereRadius;
+  MonoImage mask(depth_frame.rows(), depth_frame.cols(), MemoryType::kUnified);
+  for (int y = 0; y < depth_frame.rows(); ++y)
+    for (int x = 0; x < depth_frame.cols(); ++x) {
+      const float depth = depth_frame(y, x);
+      if (depth < kMaskDepthThreshold) {
+        mask(y, x) = 255;
+      }
+    }
+
+  // Integrate masked depth image
+  ProjectiveOccupancyIntegrator integrator;
+  integrator.integrateFrame({depth_frame, mask}, Transform::Identity(), camera_,
+                            &layer_);
+
+  // Check that all voxels projected into the unmasked area are integrated
+  // as "unobserved", i.e. log_odds = 0
+  int num_checked = 0;
+  std::vector<Index3D> block_indices = layer_.getAllBlockIndices();
+  for (auto& block_index : block_indices) {
+    auto block_ptr = layer_.getBlockAtIndex(block_index);
+    for (auto voxel_itr = block_ptr->begin(); voxel_itr != block_ptr->end();
+         ++voxel_itr) {
+      Vector3f voxel_pos = getCenterPositionFromBlockIndexAndVoxelIndex(
+          layer_.block_size(), block_index, voxel_itr.index());
+      Vector2f p2d;
+      if (camera_.project(voxel_pos, &p2d)) {
+        const Index2D pixel_pos = p2d.array().floor().cast<int>();
+        if (((p2d - pixel_pos.cast<float>()).array() > 1.f - 1e-4f).any()) {
+          // Ignore voxels that project very close to pixel boundaries.
+          // This is needed because of rounding errors on jetson platforms.
+          continue;
+        }
+        if (!mask(pixel_pos.y(), pixel_pos.x())) {
+          EXPECT_EQ(voxel_itr->log_odds, 0.f);
+          ++num_checked;
+        }
+      }
+    }
+  }
+  // Sanity check that we actually had some unmasked voxels
+  EXPECT_GT(num_checked, 0);
+}
+
 int main(int argc, char** argv) {
   FLAGS_alsologtostderr = true;
   google::InitGoogleLogging(argv[0]);

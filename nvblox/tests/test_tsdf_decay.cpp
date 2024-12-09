@@ -325,7 +325,12 @@ TEST_F(TsdfDecayIntegratorTest, TsdfDecayExcludeView) {
   // Generate a depth image of the scene.
   // NOTE(alexmillane): Looking along the xaxis.
   Transform T_L_C = Transform::Identity();
-  T_L_C.prerotate(Eigen::Quaternionf(0.5, 0.5, 0.5, 0.5));
+
+  // Note(dtingdahl): The decimals in the quaternion  are introduced to avoid
+  // the pixel grid being perfectly aligned to the voxel grid. In such aligned
+  // cases, small rounding errors (which can differ between build types and
+  // optimization level) can effect the test outcome.
+  T_L_C.prerotate(Eigen::Quaternionf(0.5123, 0.5456, 0.5789, 0.5));
   T_L_C.pretranslate(Vector3f(-4.0f, 0.0f, 2.0f));
   // This value for max distance generates some invalid regions.
   constexpr float kMaxDist = 10.f;
@@ -343,8 +348,8 @@ TEST_F(TsdfDecayIntegratorTest, TsdfDecayExcludeView) {
   const float kMaxViewDistanceM = kMaxDist;
   const std::vector<Index3D> deallocated_blocks = decay_integrator.decay(
       &layer_,
-      DecayViewExclusionOptions(&depth_frame, T_L_C, camera_, kMaxViewDistanceM,
-                                kTruncationDistanceMeters),
+      ViewBasedInclusionData(T_L_C, camera_, &depth_frame, kMaxViewDistanceM,
+                             kTruncationDistanceMeters),
       CudaStreamOwning());
   // We expect that no blocks are deallocated after a single decay.
   EXPECT_EQ(deallocated_blocks.size(), 0);

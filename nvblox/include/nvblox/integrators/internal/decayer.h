@@ -20,6 +20,7 @@ limitations under the License.
 #include "nvblox/core/cuda_stream.h"
 #include "nvblox/core/log_odds.h"
 #include "nvblox/core/parameter_tree.h"
+#include "nvblox/integrators/viewpoint.h"
 #include "nvblox/map/common_names.h"
 #include "nvblox/map/layer.h"
 #include "nvblox/sensors/camera.h"
@@ -54,18 +55,20 @@ class VoxelDecayer {
       const DecayFunctorType& voxel_decay_functor,  // NOLINT
       const bool deallocate_decayed_blocks,         // NOLINT
       const std::optional<DecayBlockExclusionOptions>& block_exclusion_options,
-      const std::optional<DecayViewExclusionOptions>& view_exclusion_options,
-      const CudaStream cuda_stream);
+      const std::optional<ViewBasedInclusionData>& view_exclusion_options,
+      const CudaStream& cuda_stream);
 
  protected:
   /// Given a vector of blocks that have been decayed, deallocate the ones that
   /// are *fully* decayed (i.e. having a weight that is close to zero)
   /// @param layer_ptr The layer in which to deallocate
   /// @param decayed_block_indices The block indices that were subject to decay
+  /// @param cuda_stream Cuda stream
   /// this round.
   /// @return A vector containing the indices of the blocks deallocated.
   std::vector<Index3D> deallocateFullyDecayedBlocks(
-      LayerType* layer_ptr, const std::vector<Index3D>& decayed_block_indices);
+      LayerType* layer_ptr, const std::vector<Index3D>& decayed_block_indices,
+      const CudaStream& cuda_stream);
 
   // Internal buffers
   host_vector<typename LayerType::BlockType*> allocated_block_ptrs_host_;

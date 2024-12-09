@@ -31,7 +31,11 @@ std::vector<bool> getContainsFlags(const GPULayerView<TsdfBlock>& gpu_layer,
 void getVoxelsAtPositionsOnGPU(const GPULayerView<TsdfBlock>& gpu_layer,
                                const std::vector<Vector3f>& p_L_vec,
                                host_vector<TsdfVoxel>* voxels,
-                               host_vector<bool>* flags);
+                               host_vector<bool>* flags,
+                               const float block_size);
+
+// Check that the GPU and CPU hashes are equal
+void checkGpuAndCpuHashesEqual(TsdfLayer& layer);
 
 }  // namespace test_utils
 }  // namespace nvblox

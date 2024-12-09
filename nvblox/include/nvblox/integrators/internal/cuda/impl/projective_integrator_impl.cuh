@@ -56,7 +56,7 @@ std::pair<int, dim3> getLaunchSizes(int num_voxel_blocks) {
 template <typename VoxelType, typename UpdateFunctor>
 __global__ void integrateBlocksKernel(
     const Index3D* block_indices_device_ptr, const Camera camera,
-    const float* image, int rows, int cols, const Transform T_C_L,
+    const MaskedDepthImageConstView image, const Transform T_C_L,
     const float block_size, const float max_integration_distance,
     UpdateFunctor* op, VoxelBlock<VoxelType>** block_device_ptrs) {
   // Get - the image-space projection of the voxel associated with this thread
@@ -64,7 +64,10 @@ __global__ void integrateBlocksKernel(
   Eigen::Vector2f u_px;
   float voxel_depth_m;
   Vector3f p_voxel_center_C;
-  if (!projectThreadVoxel(block_indices_device_ptr, camera, T_C_L, block_size,
+  Index3D block_idx, voxel_idx;
+  voxelAndBlockIndexFromCudaThreadIndex(block_indices_device_ptr, &block_idx,
+                                        &voxel_idx);
+  if (!projectThreadVoxel(block_idx, voxel_idx, camera, T_C_L, block_size,
                           max_integration_distance, &u_px, &voxel_depth_m,
                           &p_voxel_center_C)) {
     return;
@@ -72,11 +75,17 @@ __global__ void integrateBlocksKernel(
 
   // Interpolate on the image plane
   float image_value;
+  Index2D pix_pos;
   if (!interpolation::interpolate2DClosest<
-          float, interpolation::checkers::FloatPixelGreaterThanZero>(
-          image, u_px, rows, cols, &image_value)) {
+          float, interpolation::checkers::PixelNotNan<float>>(
+          image.dataConstPtr(), u_px, image.rows(), image.cols(), &image_value,
+          &pix_pos)) {
     return;
   }
+
+  // Note that isMasked is always true if there is no mask attached to the
+  // incoming image
+  const bool is_masked = image.isMasked(pix_pos.y(), pix_pos.x());
 
   // Get the Voxel we'll update in this thread
   // NOTE(alexmillane): Note that we've reverse the voxel indexing order
@@ -86,14 +95,14 @@ __global__ void integrateBlocksKernel(
                                ->voxels[threadIdx.z][threadIdx.y][threadIdx.x]);
 
   // Update the voxel using the update rule for this layer type
-  (*op)(image_value, voxel_depth_m, voxel_ptr);
+  (*op)(image_value, voxel_depth_m, is_masked, voxel_ptr);
 }
 
 // LIDAR
 template <typename VoxelType, typename UpdateFunctor>
 __global__ void integrateBlocksKernel(
     const Index3D* block_indices_device_ptr, const Lidar lidar,
-    const float* image, int rows, int cols, const Transform T_C_L,
+    const MaskedDepthImageConstView image, const Transform T_C_L,
     const float block_size, const float max_integration_distance,
     const float linear_interpolation_max_allowable_difference_m,
     const float nearest_interpolation_max_allowable_squared_dist_to_ray_m,
@@ -103,7 +112,10 @@ __global__ void integrateBlocksKernel(
   Eigen::Vector2f u_px;
   float voxel_depth_m;
   Vector3f p_voxel_center_C;
-  if (!projectThreadVoxel(block_indices_device_ptr, lidar, T_C_L, block_size,
+  Index3D block_idx, voxel_idx;
+  voxelAndBlockIndexFromCudaThreadIndex(block_indices_device_ptr, &block_idx,
+                                        &voxel_idx);
+  if (!projectThreadVoxel(block_idx, voxel_idx, lidar, T_C_L, block_size,
                           max_integration_distance, &u_px, &voxel_depth_m,
                           &p_voxel_center_C)) {
     return;
@@ -111,13 +123,18 @@ __global__ void integrateBlocksKernel(
 
   // Interpolate on the image plane
   float image_value;
+  Index2D pix_pos;
   if (!interpolation::interpolateLidarImage(
-          lidar, p_voxel_center_C, image, u_px, rows, cols,
-          linear_interpolation_max_allowable_difference_m,
+          lidar, p_voxel_center_C, image.dataConstPtr(), u_px, image.rows(),
+          image.cols(), linear_interpolation_max_allowable_difference_m,
           nearest_interpolation_max_allowable_squared_dist_to_ray_m,
-          &image_value)) {
+          &image_value, &pix_pos)) {
     return;
   }
+
+  // Note that isMasked is always true if there is no mask attached to the
+  // incoming image
+  const bool is_masked = image.isMasked(pix_pos.y(), pix_pos.x());
 
   // Get the Voxel we'll update in this thread
   // NOTE(alexmillane): Note that we've reverse the voxel indexing order
@@ -127,7 +144,7 @@ __global__ void integrateBlocksKernel(
                                ->voxels[threadIdx.z][threadIdx.y][threadIdx.x]);
 
   // Update the voxel using the update rule for this layer type
-  (*op)(image_value, voxel_depth_m, voxel_ptr);
+  (*op)(image_value, voxel_depth_m, is_masked, voxel_ptr);
 }
 
 // COLOR
@@ -144,9 +161,12 @@ __global__ void integrateBlocksKernel(
   Eigen::Vector2f u_px;
   float voxel_depth_m;
   Vector3f p_voxel_center_C;
-  if (!projectThreadVoxel<Camera>(block_indices_device_ptr, camera, T_C_L,
-                                  block_size, max_integration_distance, &u_px,
-                                  &voxel_depth_m, &p_voxel_center_C)) {
+  Index3D block_idx, voxel_idx;
+  voxelAndBlockIndexFromCudaThreadIndex(block_indices_device_ptr, &block_idx,
+                                        &voxel_idx);
+  if (!projectThreadVoxel(block_idx, voxel_idx, camera, T_C_L, block_size,
+                          max_integration_distance, &u_px, &voxel_depth_m,
+                          &p_voxel_center_C)) {
     return;
   }
 
@@ -193,8 +213,8 @@ __global__ void integrateBlocksKernel(
 template <typename VoxelType>
 template <typename UpdateFunctor>
 void ProjectiveIntegrator<VoxelType>::integrateFrame(
-    const DepthImage& depth_frame, const Transform& T_L_C, const Camera& camera,
-    UpdateFunctor* op, VoxelBlockLayer<VoxelType>* layer,
+    const MaskedDepthImageConstView& depth_frame, const Transform& T_L_C,
+    const Camera& camera, UpdateFunctor* op, VoxelBlockLayer<VoxelType>* layer,
     std::vector<Index3D>* updated_blocks) {
   integrateFrameTemplate<Camera, UpdateFunctor>(
       depth_frame, ColorImage(MemoryType::kDevice), T_L_C, camera, op, layer,
@@ -205,8 +225,8 @@ void ProjectiveIntegrator<VoxelType>::integrateFrame(
 template <typename VoxelType>
 template <typename UpdateFunctor>
 void ProjectiveIntegrator<VoxelType>::integrateFrame(
-    const DepthImage& depth_frame, const Transform& T_L_C, const Lidar& lidar,
-    UpdateFunctor* op, VoxelBlockLayer<VoxelType>* layer,
+    const MaskedDepthImageConstView& depth_frame, const Transform& T_L_C,
+    const Lidar& lidar, UpdateFunctor* op, VoxelBlockLayer<VoxelType>* layer,
     std::vector<Index3D>* updated_blocks) {
   integrateFrameTemplate<Lidar, UpdateFunctor>(
       depth_frame, ColorImage(MemoryType::kDevice), T_L_C, lidar, op, layer,
@@ -224,7 +244,7 @@ void ProjectiveIntegrator<VoxelType>::integrateFrame(
 template <typename VoxelType>
 template <typename SensorType, typename UpdateFunctor>
 void ProjectiveIntegrator<VoxelType>::integrateFrameTemplate(
-    const DepthImage& depth_frame, const ColorImage& color_frame,
+    const MaskedDepthImageConstView& depth_frame, const ColorImage& color_frame,
     const Transform& T_L_C, const SensorType& sensor, UpdateFunctor* op,
     VoxelBlockLayer<VoxelType>* layer_ptr,
     std::vector<Index3D>* updated_blocks) {
@@ -292,7 +312,7 @@ void ProjectiveIntegrator<VoxelType>::integrateFrameTemplate(
 template <typename VoxelType>
 template <typename UpdateFunctor>
 void ProjectiveIntegrator<VoxelType>::integrateBlocks(
-    const DepthImage& depth_frame, const ColorImage&, /*unused*/
+    const MaskedDepthImageConstView& depth_frame, const ColorImage&, /*unused*/
     const Transform& T_C_L, const Camera& camera, UpdateFunctor* op,
     VoxelBlockLayer<VoxelType>* layer_ptr) {
   // Kernel
@@ -302,9 +322,7 @@ void ProjectiveIntegrator<VoxelType>::integrateBlocks(
                           *cuda_stream_>>>(
       block_indices_device_.data(),  // NOLINT
       camera,                        // NOLINT
-      depth_frame.dataConstPtr(),    // NOLINT
-      depth_frame.rows(),            // NOLINT
-      depth_frame.cols(),            // NOLINT
+      depth_frame,                   // NOLINT
       T_C_L,                         // NOLINT
       layer_ptr->block_size(),       // NOLINT
       max_integration_distance_m_,   // NOLINT
@@ -318,7 +336,7 @@ void ProjectiveIntegrator<VoxelType>::integrateBlocks(
 template <typename VoxelType>
 template <typename UpdateFunctor>
 void ProjectiveIntegrator<VoxelType>::integrateBlocks(
-    const DepthImage& depth_frame, const ColorImage&, /*unused*/
+    const MaskedDepthImageConstView& depth_frame, const ColorImage&, /*unused*/
     const Transform& T_C_L, const Lidar& lidar, UpdateFunctor* op,
     VoxelBlockLayer<VoxelType>* layer_ptr) {
   // Metric params - LiDAR specific
@@ -337,9 +355,7 @@ void ProjectiveIntegrator<VoxelType>::integrateBlocks(
                           *cuda_stream_>>>(
       block_indices_device_.data(),                               // NOLINT
       lidar,                                                      // NOLINT
-      depth_frame.dataConstPtr(),                                 // NOLINT
-      depth_frame.rows(),                                         // NOLINT
-      depth_frame.cols(),                                         // NOLINT
+      depth_frame,                                                // NOLINT
       T_C_L,                                                      // NOLINT
       layer_ptr->block_size(),                                    // NOLINT
       max_integration_distance_m_,                                // NOLINT
@@ -357,7 +373,7 @@ void ProjectiveIntegrator<VoxelType>::integrateBlocks(
 template <>
 template <typename UpdateFunctor>
 void ProjectiveIntegrator<ColorVoxel>::integrateBlocks(
-    const DepthImage& depth_frame, const ColorImage& color_frame,
+    const MaskedDepthImageConstView& depth_frame, const ColorImage& color_frame,
     const Transform& T_C_L, const Camera& camera, UpdateFunctor* op,
     VoxelBlockLayer<ColorVoxel>* layer_ptr) {
   // Let the kernel know that we've subsampled - Color specific

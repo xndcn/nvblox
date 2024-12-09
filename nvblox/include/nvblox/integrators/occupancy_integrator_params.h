@@ -37,4 +37,14 @@ constexpr Param<
 constexpr Param<float>::Description kOccupiedRegionHalfWidthMParamDesc{
     "occupied_region_half_width_m", 0.1f,
     "Half the width of the region which is considered as occupied."};
+
+struct OccupancyIntegratorParams {
+  Param<float> free_region_occupancy_probability{
+      kFreeRegionOccupancyProbabilityParamDesc};
+  Param<float> occupied_region_occupancy_probability{
+      kOccupiedRegionOccupancyProbabilityParamDesc};
+  Param<float> unobserved_region_occupancy_probability{
+      kUnobservedRegionOccupancyProbabilityParamDesc};
+  Param<float> occupied_region_half_width_m{kOccupiedRegionHalfWidthMParamDesc};
+};
 }  // namespace nvblox

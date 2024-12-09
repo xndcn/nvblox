@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -28,7 +28,9 @@ ViewCalculator::ViewCalculator()
     : ViewCalculator(std::make_shared<CudaStreamOwning>()) {}
 
 ViewCalculator::ViewCalculator(std::shared_ptr<CudaStream> cuda_stream)
-    : cuda_stream_(cuda_stream) {}
+    : raycasting_viewpoint_cache_(std::make_shared<ViewpointCache>()),
+      planes_viewpoint_cache_(std::make_shared<ViewpointCache>()),
+      cuda_stream_(cuda_stream) {}
 
 unsigned int ViewCalculator::raycast_subsampling_factor() const {
   return raycast_subsampling_factor_;
@@ -36,8 +38,81 @@ unsigned int ViewCalculator::raycast_subsampling_factor() const {
 
 void ViewCalculator::raycast_subsampling_factor(
     unsigned int raycast_subsampling_factor) {
-  CHECK_GT(raycast_subsampling_factor, 0);
+  CHECK_GT(raycast_subsampling_factor, 0U);
   raycast_subsampling_factor_ = raycast_subsampling_factor;
+}
+
+WorkspaceBoundsType ViewCalculator::workspace_bounds_type() const {
+  return workspace_bounds_type_;
+}
+
+void ViewCalculator::workspace_bounds_type(
+    WorkspaceBoundsType workspace_bounds_type) {
+  workspace_bounds_type_ = workspace_bounds_type;
+}
+
+Vector3f ViewCalculator::workspace_bounds_min_corner_m() const {
+  return Vector3f(workspace_bounds_min_corner_x_m_,
+                  workspace_bounds_min_corner_y_m_,
+                  workspace_bounds_min_height_m_);
+}
+
+Vector3f ViewCalculator::workspace_bounds_max_corner_m() const {
+  return Vector3f(workspace_bounds_max_corner_x_m_,
+                  workspace_bounds_max_corner_y_m_,
+                  workspace_bounds_max_height_m_);
+}
+
+void ViewCalculator::workspace_bounds_min_corner_m(
+    const Vector3f& workspace_bounds_min_corner_m) {
+  workspace_bounds_min_corner_x_m_ = workspace_bounds_min_corner_m.x();
+  workspace_bounds_min_corner_y_m_ = workspace_bounds_min_corner_m.y();
+  workspace_bounds_min_height_m_ = workspace_bounds_min_corner_m.z();
+}
+
+void ViewCalculator::workspace_bounds_max_corner_m(
+    const Vector3f& workspace_bounds_max_corner_m) {
+  workspace_bounds_max_corner_x_m_ = workspace_bounds_max_corner_m.x();
+  workspace_bounds_max_corner_y_m_ = workspace_bounds_max_corner_m.y();
+  workspace_bounds_max_height_m_ = workspace_bounds_max_corner_m.z();
+}
+
+bool ViewCalculator::cache_last_viewpoint() const {
+  return cache_last_viewpoint_;
+}
+
+void ViewCalculator::cache_last_viewpoint(const bool cache_last_viewpoint) {
+  cache_last_viewpoint_ = cache_last_viewpoint;
+}
+
+std::shared_ptr<ViewpointCache> ViewCalculator::get_viewpoint_cache(
+    const CalculationType calculation_type) const {
+  switch (calculation_type) {
+    case CalculationType::kRaycasting:
+      return raycasting_viewpoint_cache_;
+    case CalculationType::kPlanes:
+      return planes_viewpoint_cache_;
+    default:
+      CHECK(false)
+          << "Requested viewpoint calculation type is not implemented.";
+      return std::shared_ptr<ViewpointCache>();
+  }
+}
+
+void ViewCalculator::set_viewpoint_cache(
+    std::shared_ptr<ViewpointCache> viewpoint_cache,
+    const CalculationType calculation_type) {
+  switch (calculation_type) {
+    case CalculationType::kRaycasting:
+      raycasting_viewpoint_cache_ = viewpoint_cache;
+      break;
+    case CalculationType::kPlanes:
+      planes_viewpoint_cache_ = viewpoint_cache;
+      break;
+    default:
+      CHECK(false)
+          << "Requested viewpoint calculation type is not implemented.";
+  }
 }
 
 parameters::ParameterTreeNode ViewCalculator::getParameterTree(
@@ -45,12 +120,32 @@ parameters::ParameterTreeNode ViewCalculator::getParameterTree(
   using parameters::ParameterTreeNode;
   const std::string name =
       (name_remap.empty()) ? "view_calculator" : name_remap;
+  // NOTE(alexmillane): Wrapping our weighting function to_string version in the
+  // std::function for passing to the parameter tree node constructor because it
+  // seems to have trouble with template deduction.
+  std::function<std::string(const WorkspaceBoundsType&)>
+      workspace_bounds_to_string =
+          [](const WorkspaceBoundsType& w) { return to_string(w); };
   return ParameterTreeNode(
-      name, {
-                ParameterTreeNode("raycast_to_pixels:", raycast_to_pixels_),
-                ParameterTreeNode("raycast_subsampling_factor:",
-                                  raycast_subsampling_factor_),
-            });
+      name,
+      {
+          ParameterTreeNode("raycast_subsampling_factor",
+                            raycast_subsampling_factor_),
+          ParameterTreeNode("workspace_bounds_type", workspace_bounds_type_,
+                            workspace_bounds_to_string),
+          ParameterTreeNode("workspace_bounds_min_height_m",
+                            workspace_bounds_min_height_m_),
+          ParameterTreeNode("workspace_bounds_max_height_m",
+                            workspace_bounds_max_height_m_),
+          ParameterTreeNode("workspace_bounds_min_corner_x_m",
+                            workspace_bounds_min_corner_x_m_),
+          ParameterTreeNode("workspace_bounds_max_corner_x_m",
+                            workspace_bounds_max_corner_x_m_),
+          ParameterTreeNode("workspace_bounds_min_corner_y_m",
+                            workspace_bounds_min_corner_y_m_),
+          ParameterTreeNode("workspace_bounds_max_corner_y_m",
+                            workspace_bounds_max_corner_y_m_),
+      });
 }
 
 // AABB linear indexing
@@ -84,90 +179,16 @@ __device__ void setIndexUpdated(const Index3D& index_to_update,
   }
 }
 
-template <typename T>
-void convertAabbUpdatedToVector(const Index3D& aabb_min,
+// Version producing: std::vector<Index3D>
+void convertAabbUpdatedToVector(const host_vector<bool>& aabb_updated,
+                                const Index3D& aabb_min,
                                 const Index3D& aabb_size,
-                                size_t aabb_linear_size, bool* aabb_updated,
-                                T* indices) {
-  indices->reserve(aabb_linear_size);
-  for (size_t i = 0; i < aabb_linear_size; i++) {
+                                std::vector<Index3D>* indices) {
+  indices->reserve(aabb_updated.size());
+  for (size_t i = 0; i < aabb_updated.size(); i++) {
     if (aabb_updated[i]) {
       indices->push_back(aabbLinearIndexToLayerIndex(i, aabb_min, aabb_size));
     }
-  }
-}
-
-template <typename SensorType>
-__global__ void getBlockIndicesInImageKernel(
-    const Transform T_L_C, const SensorType camera, const float* image,
-    int rows, int cols, const float block_size,
-    const float max_integration_distance_m,
-    const float max_integration_distance_behind_surface_m,
-    const Index3D aabb_min, const Index3D aabb_size, bool* aabb_updated) {
-  // First, figure out which pixel we're in.
-  int pixel_row = blockIdx.x * blockDim.x + threadIdx.x;
-  int pixel_col = blockIdx.y * blockDim.y + threadIdx.y;
-
-  // Hooray we do nothing.
-  if (pixel_row >= rows || pixel_col >= cols) {
-    return;
-  }
-
-  // Look up the pixel we care about.
-  float depth = image::access<float>(pixel_row, pixel_col, cols, image);
-  if (depth <= 0.0f) {
-    return;
-  }
-  if (max_integration_distance_m > 0.0f && depth > max_integration_distance_m) {
-    depth = max_integration_distance_m;
-  }
-
-  // Ok now project this thing into space.
-  Vector3f p_C = (depth + max_integration_distance_behind_surface_m) *
-                 camera.vectorFromPixelIndices(Index2D(pixel_col, pixel_row));
-  Vector3f p_L = T_L_C * p_C;
-
-  // Now we have the position of the thing in space. Now we need the block
-  // index.
-  Index3D block_index = getBlockIndexFromPositionInLayer(block_size, p_L);
-  setIndexUpdated(block_index, aabb_min, aabb_size, aabb_updated);
-}
-
-__global__ void raycastToBlocksKernel(int num_blocks, Index3D* block_indices,
-                                      const Transform T_L_C, float block_size,
-                                      const Index3D aabb_min,
-                                      const Index3D aabb_size,
-                                      bool* aabb_updated) {
-  int index = blockIdx.x * blockDim.x + threadIdx.x;
-  int corner_index = threadIdx.y;
-
-  if (index >= num_blocks) {
-    return;
-  }
-
-  constexpr float corner_increment_table[9][3] = {
-      {0.0f, 0.0f, 0.0f},  // NOLINT
-      {1.0f, 0.0f, 0.0f},  // NOLINT
-      {0.0f, 1.0f, 0.0f},  // NOLINT
-      {0.0f, 0.0f, 1.0f},  // NOLINT
-      {1.0f, 1.0f, 0.0f},  // NOLINT
-      {1.0f, 0.0f, 1.0f},  // NOLINT
-      {0.0f, 1.0f, 1.0f},  // NOLINT
-      {1.0f, 1.0f, 1.0f},  // NOLINT
-      {0.5f, 0.5f, 0.5f},  // NOLINT
-  };
-
-  const Vector3f increment(corner_increment_table[corner_index][0],
-                           corner_increment_table[corner_index][1],
-                           corner_increment_table[corner_index][2]);
-
-  const Index3D& block_index = block_indices[index];
-
-  RayCaster raycaster(T_L_C.translation() / block_size,
-                      block_index.cast<float>() + increment);
-  Index3D ray_index;
-  while (raycaster.nextRayIndex(&ray_index)) {
-    setIndexUpdated(ray_index, aabb_min, aabb_size, aabb_updated);
   }
 }
 
@@ -180,8 +201,8 @@ __global__ void combinedBlockIndicesInImageKernel(
     int raycast_subsampling_factor, const Index3D aabb_min,
     const Index3D aabb_size, bool* aabb_updated) {
   // First, figure out which pixel we're in.
-  const int ray_idx_row = blockIdx.x * blockDim.x + threadIdx.x;
-  const int ray_idx_col = blockIdx.y * blockDim.y + threadIdx.y;
+  const int ray_idx_col = blockIdx.x * blockDim.x + threadIdx.x;
+  const int ray_idx_row = blockIdx.y * blockDim.y + threadIdx.y;
   int pixel_row = ray_idx_row * raycast_subsampling_factor;
   int pixel_col = ray_idx_col * raycast_subsampling_factor;
 
@@ -228,16 +249,36 @@ __global__ void combinedBlockIndicesInImageKernel(
 
 template <typename SensorType>
 std::vector<Index3D> ViewCalculator::getBlocksInImageViewRaycastTemplate(
-    const DepthImage& depth_frame, const Transform& T_L_C,
+    const MaskedDepthImageConstView& depth_frame, const Transform& T_L_C,
     const SensorType& camera, const float block_size,
     const float max_integration_distance_behind_surface_m,
     const float max_integration_distance_m) {
   timing::Timer total_timer("view_calculator/raycast");
+  // Check cache
+  CHECK_NOTNULL(raycasting_viewpoint_cache_);
+  if (cache_last_viewpoint_) {
+    if (auto cached_result =
+            raycasting_viewpoint_cache_->getCachedResult(T_L_C, camera);
+        cached_result.has_value()) {
+      return cached_result.value();
+    }
+  }
+
   timing::Timer setup_timer("view_calculator/raycast/setup");
 
   // Aight so first we have to get the AABB of this guy.
-  const AxisAlignedBoundingBox aabb_L =
+  AxisAlignedBoundingBox aabb_L =
       camera.getViewAABB(T_L_C, 0.0f, max_integration_distance_m);
+
+  // Apply the workspace bounds,
+  // i.e. make sure we only return blocks that are within the workspace limits.
+  if (!applyWorkspaceBounds(aabb_L, workspace_bounds_type_,
+                            workspace_bounds_min_corner_m(),
+                            workspace_bounds_max_corner_m(), &aabb_L)) {
+    // Return an empty vector of blocks to update if the workspace is not valid
+    // (i.e. empty).
+    return std::vector<Index3D>();
+  }
 
   // Get the min index and the max index.
   const Index3D min_index =
@@ -264,17 +305,10 @@ std::vector<Index3D> ViewCalculator::getBlocksInImageViewRaycastTemplate(
   setup_timer.Stop();
 
   // Raycast
-  if (raycast_to_pixels_) {
-    getBlocksByRaycastingPixels(T_L_C, camera, depth_frame, block_size,
-                                max_integration_distance_behind_surface_m,
-                                max_integration_distance_m, min_index,
-                                aabb_size, aabb_device_buffer_.data());
-  } else {
-    getBlocksByRaycastingCorners(T_L_C, camera, depth_frame, block_size,
-                                 max_integration_distance_behind_surface_m,
-                                 max_integration_distance_m, min_index,
-                                 aabb_size, aabb_device_buffer_.data());
-  }
+  getBlocksByRaycastingPixelsAsync(T_L_C, camera, depth_frame, block_size,
+                                   max_integration_distance_behind_surface_m,
+                                   max_integration_distance_m, min_index,
+                                   aabb_size, aabb_device_buffer_.data());
 
   // Output vector.
   timing::Timer output_timer("view_calculator/raycast/output");
@@ -285,18 +319,21 @@ std::vector<Index3D> ViewCalculator::getBlocksInImageViewRaycastTemplate(
   checkCudaErrors(cudaPeekAtLastError());
 
   std::vector<Index3D> output_vector;
-  convertAabbUpdatedToVector<std::vector<Index3D>>(
-      min_index, aabb_size, aabb_linear_size, aabb_host_buffer_.data(),
-      &output_vector);
-  output_timer.Stop();
+  convertAabbUpdatedToVector(aabb_host_buffer_, min_index, aabb_size,
+                             &output_vector);
 
+  // Cache
+  if (cache_last_viewpoint_) {
+    raycasting_viewpoint_cache_->storeResultInCache(T_L_C, camera,
+                                                    output_vector);
+  }
   return output_vector;
 }
 
 // Camera
 std::vector<Index3D> ViewCalculator::getBlocksInImageViewRaycast(
-    const DepthImage& depth_frame, const Transform& T_L_C, const Camera& camera,
-    const float block_size,
+    const MaskedDepthImageConstView& depth_frame, const Transform& T_L_C,
+    const Camera& camera, const float block_size,
     const float max_integration_distance_behind_surface_m,
     const float max_integration_distance_m) {
   return getBlocksInImageViewRaycastTemplate(
@@ -306,8 +343,8 @@ std::vector<Index3D> ViewCalculator::getBlocksInImageViewRaycast(
 
 // Lidar
 std::vector<Index3D> ViewCalculator::getBlocksInImageViewRaycast(
-    const DepthImage& depth_frame, const Transform& T_L_C, const Lidar& lidar,
-    const float block_size,
+    const MaskedDepthImageConstView& depth_frame, const Transform& T_L_C,
+    const Lidar& lidar, const float block_size,
     const float max_integration_distance_behind_surface_m,
     const float max_integration_distance_m) {
   return getBlocksInImageViewRaycastTemplate(
@@ -316,67 +353,9 @@ std::vector<Index3D> ViewCalculator::getBlocksInImageViewRaycast(
 }
 
 template <typename SensorType>
-void ViewCalculator::getBlocksByRaycastingCorners(
+void ViewCalculator::getBlocksByRaycastingPixelsAsync(
     const Transform& T_L_C, const SensorType& camera,
-    const DepthImage& depth_frame, float block_size,
-    const float max_integration_distance_behind_surface_m,
-    const float max_integration_distance_m, const Index3D& min_index,
-    const Index3D& aabb_size, bool* aabb_updated_cuda) {
-  // Get the blocks touched by the ray endpoints
-  // We'll do warps of 32x32 pixels in the image. This is 1024 threads which is
-  // in the recommended 512-1024 range.
-  constexpr int kThreadDim = 16;
-  int rounded_rows = static_cast<int>(
-      std::ceil(depth_frame.rows() / static_cast<float>(kThreadDim)));
-  int rounded_cols = static_cast<int>(
-      std::ceil(depth_frame.cols() / static_cast<float>(kThreadDim)));
-  dim3 block_dim(rounded_rows, rounded_cols);
-  dim3 thread_dim(kThreadDim, kThreadDim);
-
-  timing::Timer image_blocks_timer("view_calculator/raycast/get_image_blocks");
-  getBlockIndicesInImageKernel<<<block_dim, thread_dim, 0, *cuda_stream_>>>(
-      T_L_C, camera, depth_frame.dataConstPtr(), depth_frame.rows(),
-      depth_frame.cols(), block_size, max_integration_distance_m,
-      max_integration_distance_behind_surface_m, min_index, aabb_size,
-      aabb_updated_cuda);
-  cuda_stream_->synchronize();
-  checkCudaErrors(cudaPeekAtLastError());
-
-  image_blocks_timer.Stop();
-
-  timing::Timer image_blocks_copy_timer(
-      "view_calculator/raycast/image_blocks_copy");
-
-  unified_vector<Index3D> initial_vector;
-  const size_t aabb_linear_size = aabb_size.x() * aabb_size.y() * aabb_size.z();
-  initial_vector.reserve(aabb_linear_size / 3);
-  convertAabbUpdatedToVector<unified_vector<Index3D>>(
-      min_index, aabb_size, aabb_linear_size, aabb_updated_cuda,
-      &initial_vector);
-  image_blocks_copy_timer.Stop();
-
-  // Call the kernel to do raycasting.
-  timing::Timer raycast_blocks_timer("view_calculator/raycast/raycast_kernel");
-
-  int num_initial_blocks = initial_vector.size();
-  constexpr int kNumCorners = 9;
-  constexpr int kNumBlocksPerThreadBlock = 40;
-  int raycast_block_dim = static_cast<int>(std::ceil(
-      static_cast<float>(num_initial_blocks) / kNumBlocksPerThreadBlock));
-  dim3 raycast_thread_dim(kNumBlocksPerThreadBlock, kNumCorners);
-  raycastToBlocksKernel<<<raycast_block_dim, raycast_thread_dim, 0,
-                          *cuda_stream_>>>(
-      num_initial_blocks, initial_vector.data(), T_L_C, block_size, min_index,
-      aabb_size, aabb_updated_cuda);
-  cuda_stream_->synchronize();
-  checkCudaErrors(cudaPeekAtLastError());
-  raycast_blocks_timer.Stop();
-}
-
-template <typename SensorType>
-void ViewCalculator::getBlocksByRaycastingPixels(
-    const Transform& T_L_C, const SensorType& camera,
-    const DepthImage& depth_frame, float block_size,
+    const MaskedDepthImageConstView& depth_frame, float block_size,
     const float max_integration_distance_behind_surface_m,
     const float max_integration_distance_m, const Index3D& min_index,
     const Index3D& aabb_size, bool* aabb_updated_cuda) {
@@ -390,14 +369,14 @@ void ViewCalculator::getBlocksByRaycastingPixels(
       std::ceil(static_cast<float>(depth_frame.cols() + 1) /
                 static_cast<float>(raycast_subsampling_factor_));
 
-  // We'll do warps of 32x32 pixels in the image. This is 1024 threads which is
-  // in the recommended 512-1024 range.
+  // We'll do warps of 16x16 pixels in the image. This is 1024 threads which
+  // is in the recommended 512-1024 range.
   constexpr int kThreadDim = 16;
   const int rounded_rows = static_cast<int>(
       std::ceil(num_subsampled_rows / static_cast<float>(kThreadDim)));
   const int rounded_cols = static_cast<int>(
       std::ceil(num_subsampled_cols / static_cast<float>(kThreadDim)));
-  dim3 block_dim(rounded_rows, rounded_cols);
+  dim3 block_dim(rounded_cols, rounded_rows);
   dim3 thread_dim(kThreadDim, kThreadDim);
 
   combinedBlockIndicesInImageKernel<<<block_dim, thread_dim, 0,
@@ -406,7 +385,6 @@ void ViewCalculator::getBlocksByRaycastingPixels(
       depth_frame.cols(), block_size, max_integration_distance_m,
       max_integration_distance_behind_surface_m, raycast_subsampling_factor_,
       min_index, aabb_size, aabb_updated_cuda);
-  cuda_stream_->synchronize();
   checkCudaErrors(cudaPeekAtLastError());
   combined_kernel_timer.Stop();
 }
@@ -416,6 +394,15 @@ std::vector<Index3D> ViewCalculator::getBlocksInViewPlanes(
     const float max_distance) {
   CHECK_GT(max_distance, 0.0f);
   timing::Timer("view_calculator/get_blocks_in_view_planes");
+  // Check cache
+  CHECK_NOTNULL(planes_viewpoint_cache_);
+  if (cache_last_viewpoint_) {
+    if (auto cached_result =
+            planes_viewpoint_cache_->getCachedResult(T_L_C, camera);
+        cached_result.has_value()) {
+      return cached_result.value();
+    }
+  }
 
   // Project all block centers into the image and check if they are
   // inside the image viewport.
@@ -426,7 +413,18 @@ std::vector<Index3D> ViewCalculator::getBlocksInViewPlanes(
       camera.getViewFrustum(T_L_C, kMinDistance, max_distance);
 
   // Coarse bound: AABB
-  const AxisAlignedBoundingBox aabb_L = frustum.getAABB();
+  AxisAlignedBoundingBox aabb_L = frustum.getAABB();
+
+  // Apply the workspace bounds,
+  // i.e. make sure we only return blocks that are within the workspace limits.
+  if (!applyWorkspaceBounds(aabb_L, workspace_bounds_type_,
+                            workspace_bounds_min_corner_m(),
+                            workspace_bounds_max_corner_m(), &aabb_L)) {
+    // Return an empty vector of blocks to update if the workspace is not valid
+    // (i.e. empty).
+    return std::vector<Index3D>();
+  }
+
   const std::vector<Index3D> block_indices_in_aabb =
       getBlockIndicesTouchedByBoundingBox(block_size, aabb_L);
 
@@ -463,22 +461,99 @@ std::vector<Index3D> ViewCalculator::getBlocksInViewPlanes(
       }
     }
   }
+  // Cache
+  if (cache_last_viewpoint_) {
+    planes_viewpoint_cache_->storeResultInCache(T_L_C, camera,
+                                                block_indices_in_frustum);
+  }
   return block_indices_in_frustum;
 }
 
-std::vector<Index3D> ViewCalculator::getBlocksInImageViewPlanes(
-    const DepthImage& depth_frame, const Transform& T_L_C, const Camera& camera,
-    const float block_size, const float truncation_distance_m,
-    const float max_integration_distance_m) {
-  timing::Timer("view_calculator/get_blocks_in_image_view_planes");
-  float min_depth, max_depth;
-  std::tie(min_depth, max_depth) = image::minmaxGPU(depth_frame, *cuda_stream_);
-  float max_depth_plus_trunc = max_depth + truncation_distance_m;
-  if (max_integration_distance_m > 0.0f) {
-    max_depth_plus_trunc =
-        std::min<float>(max_depth_plus_trunc, max_integration_distance_m);
+std::optional<std::vector<Index3D>> ViewpointCache::getCachedResult(
+    const Transform& T_L_C, const Camera& camera) const {
+  CHECK_EQ(camera_cache_.size(), pose_cache_.size());
+  CHECK_EQ(camera_cache_.size(), blocks_in_view_cache_.size());
+
+  if (pose_cache_.empty() || camera_cache_.empty()) {
+    return std::nullopt;
   }
-  return getBlocksInViewPlanes(T_L_C, camera, block_size, max_depth_plus_trunc);
+
+  // Iterate through the cache and check if anything fits the
+  // current pose and camera.
+  bool cache_hit = false;
+  size_t cache_hit_idx = 0;
+  for (size_t i = 0; i < camera_cache_.size(); i++) {
+    if (areCamerasEqual(camera, camera_cache_[i], T_L_C, pose_cache_[i])) {
+      cache_hit = true;
+      cache_hit_idx = i;
+      break;
+    }
+  }
+
+  // Return the cached result if there is any.
+  if (!cache_hit) {
+    return std::nullopt;
+  }
+  return blocks_in_view_cache_[cache_hit_idx];
+}
+
+std::optional<std::vector<Index3D>> ViewpointCache::getCachedResult(
+    const Transform& T_L_C, const Lidar& lidar) const {
+  CHECK_EQ(lidar_cache_.size(), pose_cache_.size());
+  CHECK_EQ(lidar_cache_.size(), blocks_in_view_cache_.size());
+  if (pose_cache_.empty() || lidar_cache_.empty()) {
+    return std::nullopt;
+  }
+
+  // Iterate through the cache and check if anything fits the current
+  // pose and lidar.
+  bool cache_hit = false;
+  size_t cache_hit_idx = 0;
+  for (size_t i = 0; i < lidar_cache_.size(); i++) {
+    if (areLidarsEqual(lidar, lidar_cache_[i], T_L_C, pose_cache_[i])) {
+      cache_hit = true;
+      cache_hit_idx = i;
+      break;
+    }
+  }
+
+  // Return the cached result if there is any.
+  if (!cache_hit) {
+    return std::nullopt;
+  }
+  return blocks_in_view_cache_[cache_hit_idx];
+}
+
+void ViewpointCache::storeResultInCache(
+    const Transform& T_L_C, const Camera& camera,
+    const std::vector<Index3D>& blocks_in_view) {
+  CHECK_EQ(camera_cache_.size(), pose_cache_.size());
+  CHECK_EQ(camera_cache_.size(), blocks_in_view_cache_.size());
+  if (camera_cache_.size() == kMaxCacheSize) {
+    // Remove the oldest element.
+    pose_cache_.pop_back();
+    camera_cache_.pop_back();
+    blocks_in_view_cache_.pop_back();
+  }
+  pose_cache_.push_front(T_L_C);
+  camera_cache_.push_front(camera);
+  blocks_in_view_cache_.push_front(blocks_in_view);
+}
+
+void ViewpointCache::storeResultInCache(
+    const Transform& T_L_C, const Lidar& lidar,
+    const std::vector<Index3D>& blocks_in_view) {
+  CHECK_EQ(lidar_cache_.size(), pose_cache_.size());
+  CHECK_EQ(lidar_cache_.size(), blocks_in_view_cache_.size());
+  if (lidar_cache_.size() == kMaxCacheSize) {
+    // Remove the oldest element.
+    pose_cache_.pop_back();
+    lidar_cache_.pop_back();
+    blocks_in_view_cache_.pop_back();
+  }
+  pose_cache_.push_front(T_L_C);
+  lidar_cache_.push_front(lidar);
+  blocks_in_view_cache_.push_front(blocks_in_view);
 }
 
 }  // namespace nvblox

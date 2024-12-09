@@ -63,7 +63,7 @@ inline bool RayCaster::nextRayIndex(Index3D* ray_index) {
     return false;
   }
 
-  DCHECK(ray_index != nullptr);
+  NVBLOX_DCHECK(ray_index != nullptr, "");
   *ray_index = current_index_;
 
   int t_min_idx;

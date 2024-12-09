@@ -141,7 +141,8 @@ TEST(MeshColoringTests, CPUvsGPUon3DMatch) {
 
   // Color on GPU and CPU
   mesh_integrator.colorMeshGPU(color_layer, &mesh_layer_colored_on_gpu);
-  mesh_integrator.colorMeshCPU(color_layer_host, &mesh_layer_colored_on_cpu);
+  mesh_integrator.colorMeshCPU(color_layer_host, &mesh_layer_colored_on_cpu,
+                               CudaStreamOwning());
 
   // Compare colors between the two implementations
   int num_same = 0;

@@ -15,23 +15,15 @@ limitations under the License.
 */
 #pragma once
 
+#include "nvblox/interpolation/interpolation_2d.h"
 namespace nvblox {
 
 template <typename SensorType>
 __device__ inline bool projectThreadVoxel(
-    const Index3D* block_indices_device_ptr, const SensorType& sensor,
-    const Transform& T_C_L, const float block_size, const float max_depth,
-    Eigen::Vector2f* u_px_ptr, float* u_depth_ptr,
+    const Index3D& block_idx, const Index3D& voxel_idx,
+    const SensorType& sensor, const Transform& T_C_L, const float block_size,
+    const float max_depth, Eigen::Vector2f* u_px_ptr, float* u_depth_ptr,
     Vector3f* p_voxel_center_C_ptr) {
-  // The indices of the voxel this thread will work on
-  // block_indices_device_ptr[blockIdx.x]:
-  //                 - The index of the block we're working on (blockIdx.y/z
-  //                   should be zero)
-  // threadIdx.x/y/z - The indices of the voxel within the block (we
-  //                   expect the threadBlockDims == voxelBlockDims)
-  const Index3D block_idx = block_indices_device_ptr[blockIdx.x];
-  const Index3D voxel_idx(threadIdx.z, threadIdx.y, threadIdx.x);
-
   // Voxel center point
   const Vector3f p_voxel_center_L =
       getCenterPositionFromBlockIndexAndVoxelIndex(block_size, block_idx,
@@ -52,6 +44,46 @@ __device__ inline bool projectThreadVoxel(
     return false;
   }
 
+  return true;
+}
+
+__device__ inline void voxelAndBlockIndexFromCudaThreadIndex(
+    const Index3D* block_indices_device_ptr, Index3D* const block_idx,
+    Index3D* voxel_idx) {
+  *block_idx = block_indices_device_ptr[blockIdx.x];
+  *voxel_idx = Index3D(threadIdx.z, threadIdx.y, threadIdx.x);
+}
+
+__device__ inline bool doesVoxelHaveDepthMeasurement(
+    const Index3D& block_idx, const Index3D& voxel_idx, const Camera camera,
+    const float* image, int rows, int cols, const Transform T_C_L,
+    const float block_size, const float max_integration_distance,
+    const float truncation_distance_m) {
+  // Project the voxel into the depth image
+  Eigen::Vector2f u_px;
+  float voxel_depth_m;
+  Vector3f p_voxel_center_C;
+  if (!projectThreadVoxel(block_idx, voxel_idx, camera, T_C_L, block_size,
+                          max_integration_distance, &u_px, &voxel_depth_m,
+                          &p_voxel_center_C)) {
+    return false;
+  }
+  // Interpolate on the image plane
+  // Note that the value of the depth image is the depth to the surface.
+  float surface_depth_measured;
+  if (!interpolation::interpolate2DClosest<
+          float, interpolation::checkers::FloatPixelGreaterThanZero>(
+          image, u_px, rows, cols, &surface_depth_measured)) {
+    return false;
+  }
+  // Check the distance from the surface
+  const float voxel_to_surface_distance =
+      surface_depth_measured - voxel_depth_m;
+  // Check that we're not occluded (we're occluded if we're more than the
+  // truncation distance behind a surface).
+  if (voxel_to_surface_distance < -truncation_distance_m) {
+    return false;
+  }
   return true;
 }
 

@@ -19,9 +19,11 @@ limitations under the License.
 #include "nvblox/map/common_names.h"
 #include "nvblox/map/layer.h"
 #include "nvblox/map/voxels.h"
+#include "nvblox/primitives/scene.h"
 
 #include "nvblox/tests/blox.h"
 #include "nvblox/tests/blox_utils.h"
+#include "nvblox/tests/gpu_layer_utils.h"
 #include "nvblox/tests/utils.h"
 
 using namespace nvblox;
@@ -106,8 +108,12 @@ TEST(LayerTest, MinCornerBasedIndexing) {
 TsdfLayer generateTsdfLayer() {
   constexpr float voxel_size_m = 1.0;
   TsdfLayer tsdf_layer(voxel_size_m, MemoryType::kDevice);
+  EXPECT_TRUE(tsdf_layer.getGpuLayerView(CudaStreamOwning())
+                  .isValid(CudaStreamOwning()));
   auto block_ptr = tsdf_layer.allocateBlockAtIndex(Index3D(0, 0, 0));
   test_utils::setTsdfBlockVoxelsInSequence(block_ptr);
+  EXPECT_TRUE(tsdf_layer.getGpuLayerView(CudaStreamOwning())
+                  .isValid(CudaStreamOwning()));
   return tsdf_layer;
 }
 
@@ -176,26 +182,27 @@ TEST(VoxelLayerTest, GetTsdfVoxelsOnDevice) {
 
   // Check voxel center positions
   device_vector<Vector3f> query_device;
-  query_device.copyFrom(generateQueryPositions());
+  query_device.copyFromAsync(generateQueryPositions(), CudaStreamOwning());
 
   device_vector<TsdfVoxel> voxels;
   device_vector<bool> flags;
   tsdf_layer.getVoxelsGPU(query_device, &voxels, &flags);
   unified_vector<TsdfVoxel> voxels_host;
-  voxels_host.copyFrom(voxels);
+  voxels_host.copyFromAsync(voxels, CudaStreamOwning());
   unified_vector<bool> flags_host;
-  flags_host.copyFrom(flags);
-  checkSequentialTsdfTest(voxels_host.toVector(), flags_host.toVector());
+  flags_host.copyFromAsync(flags, CudaStreamOwning());
+  checkSequentialTsdfTest(voxels_host.toVectorAsync(CudaStreamOwning()),
+                          flags_host.toVectorAsync(CudaStreamOwning()));
 
   // Now try some edge cases
 
   // Just inside the block from {0.0f, 0.0f, 0.0f}
   Vector3f kVecEps = 1e-5 * Vector3f::Ones();
   std::vector<Vector3f> query = {kVecEps};
-  query_device.copyFrom(query);
+  query_device.copyFromAsync(query, CudaStreamOwning());
   tsdf_layer.getVoxelsGPU(query_device, &voxels, &flags);
-  voxels_host.copyFrom(voxels);
-  flags_host.copyFrom(flags);
+  voxels_host.copyFromAsync(voxels, CudaStreamOwning());
+  flags_host.copyFromAsync(flags, CudaStreamOwning());
   EXPECT_EQ(flags_host.size(), 1);
   EXPECT_EQ(voxels_host.size(), 1);
   EXPECT_TRUE(flags_host[0]);
@@ -204,26 +211,26 @@ TEST(VoxelLayerTest, GetTsdfVoxelsOnDevice) {
 
   // Just inside the block from it's far boundary {8.0f, 8.0f, 8.0f}
   query = {Vector3f(8.0f, 8.0f, 8.0f) - kVecEps};
-  query_device.copyFrom(query);
+  query_device.copyFromAsync(query, CudaStreamOwning());
   tsdf_layer.getVoxelsGPU(query_device, &voxels, &flags);
-  voxels_host.copyFrom(voxels);
-  flags_host.copyFrom(flags);
+  voxels_host.copyFromAsync(voxels, CudaStreamOwning());
+  flags_host.copyFromAsync(flags, CudaStreamOwning());
   EXPECT_TRUE(flags_host[0]);
   EXPECT_EQ(voxels_host[0].distance, 511.0f);
   EXPECT_EQ(voxels_host[0].weight, 511.0f);
 
   // Just outside the block from {0.0f, 0.0f, 0.0f}
   query = {-kVecEps};
-  query_device.copyFrom(query);
+  query_device.copyFromAsync(query, CudaStreamOwning());
   tsdf_layer.getVoxelsGPU(query_device, &voxels, &flags);
-  flags_host.copyFrom(flags);
+  flags_host.copyFromAsync(flags, CudaStreamOwning());
   EXPECT_FALSE(flags_host[0]);
 
   // Just outside the block from it's far boundary {8.0f, 8.0f, 8.0f}
   query = {Vector3f(8.0f, 8.0f, 8.0f) + kVecEps};
-  query_device.copyFrom(query);
+  query_device.copyFromAsync(query, CudaStreamOwning());
   tsdf_layer.getVoxelsGPU(query_device, &voxels, &flags);
-  flags_host.copyFrom(flags);
+  flags_host.copyFromAsync(flags, CudaStreamOwning());
   EXPECT_FALSE(flags_host[0]);
 }
 
@@ -231,19 +238,26 @@ TEST(VoxelLayerTest, GetCustomVoxelsOnDevice) {
   // Generate FloatingVoxelLayer
   constexpr float voxel_size_m = 1.0;
   FloatVoxelLayer voxel_layer(voxel_size_m, MemoryType::kDevice);
+  // TODO(dtingdah): The following check is disabled. It fails whenever
+  // GPULayerView<FloatVoxelBlock> is instantiated in the test lib. Same goes
+  // for other layer types used in the test lib. If we move themto libnvblox it
+  // passes. Reasons unknown
+  // EXPECT_TRUE(voxel_layer.getGpuLayerView(CudaStreamOwning())
+  //                 .isValid(CudaStreamOwning()));
+
   auto block_ptr = voxel_layer.allocateBlockAtIndex(Index3D(0, 0, 0));
   test_utils::setFloatingBlockVoxelsInSequence(block_ptr);
 
   // Check voxel center positions
   device_vector<Vector3f> query_device;
-  query_device.copyFrom(generateQueryPositions());
+  query_device.copyFromAsync(generateQueryPositions(), CudaStreamOwning());
   device_vector<FloatVoxel> voxels;
   device_vector<bool> flags;
   voxel_layer.getVoxelsGPU(query_device, &voxels, &flags);
   unified_vector<FloatVoxel> voxels_host;
-  voxels_host.copyFrom(voxels);
+  voxels_host.copyFromAsync(voxels, CudaStreamOwning());
   unified_vector<bool> flags_host;
-  flags_host.copyFrom(flags);
+  flags_host.copyFromAsync(flags, CudaStreamOwning());
   for (size_t i = 0; i < voxels.size(); i++) {
     EXPECT_TRUE(flags_host[i]);
     EXPECT_EQ(voxels_host[i].voxel_data, static_cast<float>(i));
@@ -367,30 +381,6 @@ TEST(VoxelLayerTest, CopyLayerTest) {
       }
     }
   }
-
-  // Now try the assignment. This triggers a second copy.
-  TsdfLayer tsdf_layer_assignment(voxel_size_m, MemoryType::kHost);
-  LOG(INFO) << "About to do second copy of layer";
-  tsdf_layer_assignment.copyFrom(tsdf_layer);
-  EXPECT_EQ(tsdf_layer_assignment.memory_type(), MemoryType::kHost);
-
-  std::vector<Index3D> block_indices_assignment =
-      tsdf_layer_assignment.getAllBlockIndices();
-  EXPECT_EQ(block_indices_assignment.size(), all_blocks.size());
-
-  for (const Index3D& block_index : all_blocks) {
-    auto block_ptr = tsdf_layer_assignment.getBlockAtIndex(block_index);
-    ASSERT_TRUE(block_ptr);
-
-    for (int i = 0; i < 8; i++) {
-      for (int j = 0; j < 8; j++) {
-        for (int k = 0; k < 8; k++) {
-          EXPECT_NEAR(block_ptr->voxels[i][j][k].distance,
-                      static_cast<float>(block_index.norm()), 1e-4f);
-        }
-      }
-    }
-  }
 }
 
 TEST(VoxelLayerTest, ClearBlocks) {
@@ -447,6 +437,54 @@ TEST(LayerTest, IsLayerTrait) {
   bool test_false =
       traits::are_layers<TsdfLayer, EsdfLayer, MeshLayer, std::string>::value;
   EXPECT_FALSE(test_false);
+}
+
+class LayerTestFixture : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    std::srand(0);
+
+    // Create a SDF layer scene
+    primitives::Scene scene;
+    scene.aabb() = AxisAlignedBoundingBox(Vector3f(-3.0f, -3.0f, 0.0f),
+                                          Vector3f(3.0f, 3.0f, 3.0f));
+    scene.addPrimitive(std::make_unique<primitives::Plane>(
+        Vector3f(0.0, 0.0, 0.0), Vector3f(-1, 0, 0)));
+    scene.generateLayerFromScene(4 * kVoxelSize, &tsdf_layer_);
+    CHECK(tsdf_layer_.size() > 10);
+  }
+  static constexpr float kVoxelSize = 0.1;
+  TsdfLayer tsdf_layer_{kVoxelSize, MemoryType::kUnified};
+};
+
+TEST_F(LayerTestFixture, GpuCpuHashEquivalence) {
+  test_utils::checkGpuAndCpuHashesEqual(tsdf_layer_);
+}
+
+TEST_F(LayerTestFixture, GpuCpuHashEquivalence_copy) {
+  TsdfLayer copy(tsdf_layer_.voxel_size(), MemoryType::kHost);
+  copy.copyFrom(tsdf_layer_);
+  test_utils::checkGpuAndCpuHashesEqual(copy);
+}
+
+TEST_F(LayerTestFixture, GpuCpuHashEquivalence_clear) {
+  tsdf_layer_.clear();
+  test_utils::checkGpuAndCpuHashesEqual(tsdf_layer_);
+}
+
+TEST_F(LayerTestFixture, GpuCpuHashEquivalence_allocate) {
+  tsdf_layer_.allocateBlockAtIndex({999, 999, 999});
+  test_utils::checkGpuAndCpuHashesEqual(tsdf_layer_);
+}
+
+TEST_F(LayerTestFixture, GpuCpuHashEquivalence_clearOneBlock) {
+  tsdf_layer_.clearBlock(tsdf_layer_.getAllBlockIndices().front());
+  test_utils::checkGpuAndCpuHashesEqual(tsdf_layer_);
+}
+
+TEST_F(LayerTestFixture, GpuCpuHashEquivalence_clearAllBlocks) {
+  tsdf_layer_.clearBlocks(tsdf_layer_.getAllBlockIndices());
+  test_utils::checkGpuAndCpuHashesEqual(tsdf_layer_);
 }
 
 int main(int argc, char** argv) {

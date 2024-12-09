@@ -24,6 +24,8 @@ limitations under the License.
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
+#include "nvblox/core/bitmask.h"
+
 namespace nvblox {
 
 /// Whether the storage or processing is happening on CPU, GPU, or any future
@@ -61,6 +63,22 @@ inline std::string toString(const MemoryType& memory_type) {
 }
 inline bool isGpuMemory(const MemoryType memory_type) {
   return ((memory_type == MemoryType::kDevice) ||
+          (memory_type == MemoryType::kUnified));
+}
+
+enum class LayerType : int {
+  kTsdf,
+  kEsdf,
+  kColor,
+  kMesh,
+  kFreespace,
+  kOccupancy,
+};
+
+using LayerTypeBitMask = BitMask<LayerType>;
+
+inline bool isAccessibleOnCPU(const MemoryType memory_type) {
+  return ((memory_type == MemoryType::kHost) ||
           (memory_type == MemoryType::kUnified));
 }
 
@@ -112,6 +130,7 @@ typedef Eigen::Vector3f Vector3f;
 typedef Eigen::Vector2f Vector2f;
 
 typedef Eigen::AlignedBox3f AxisAlignedBoundingBox;
+typedef Eigen::AlignedBox2i ImageBoundingBox;
 
 typedef Eigen::Isometry3f Transform;
 

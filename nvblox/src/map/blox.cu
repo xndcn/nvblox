@@ -41,4 +41,62 @@ void setColorBlockGrayOnGPUAsync(ColorBlock* block_device_ptr,
   checkCudaErrors(cudaPeekAtLastError());
 }
 
+template <class BlockType>
+__global__ void initializeBlocksKernel(BlockType** block_ptrs, int num_blocks) {
+  const int block_idx = blockIdx.x;
+
+  if (block_idx < num_blocks) {
+    block_ptrs[block_idx]->voxels[threadIdx.z][threadIdx.y][threadIdx.x] =
+        BlockType::VoxelType();
+  }
+}
+
+template <class BlockType>
+void initializeBlocksAsync(host_vector<BlockType*>& blocks,
+                           const CudaStream& cuda_stream,
+                           const MemoryType /*unused*/) {
+  if (blocks.empty()) {
+    return;
+  }
+
+  const dim3 threads_per_block = {BlockType::kVoxelsPerSide,
+                                  BlockType::kVoxelsPerSide,
+                                  BlockType::kVoxelsPerSide};
+  const int num_blocks = blocks.size();
+
+  initializeBlocksKernel<BlockType>
+      <<<num_blocks, threads_per_block, 0, cuda_stream>>>(blocks.data(),
+                                                          blocks.size());
+}
+
+// Specialization for meshblock
+template <>
+void initializeBlocksAsync(host_vector<MeshBlock*>& blocks,
+                           const CudaStream& cuda_stream,
+                           const MemoryType memory_type) {
+  for (auto& ptr : blocks) {
+    MeshBlock::initAsync(ptr, memory_type, cuda_stream);
+  }
+}
+
+// Specializations for Voxelblock types
+template void initializeBlocksAsync<TsdfBlock>(host_vector<TsdfBlock*>& blocks,
+                                               const CudaStream& cuda_stream,
+                                               const MemoryType memory_type);
+template void initializeBlocksAsync<OccupancyBlock>(
+    host_vector<OccupancyBlock*>& blocks, const CudaStream& cuda_stream,
+    const MemoryType memory_type);
+template void initializeBlocksAsync<ColorBlock>(
+    host_vector<ColorBlock*>& blocks, const CudaStream& cuda_stream,
+    const MemoryType memory_type);
+template void initializeBlocksAsync<MeshBlock>(host_vector<MeshBlock*>& blocks,
+                                               const CudaStream& cuda_stream,
+                                               const MemoryType memory_type);
+template void initializeBlocksAsync<FreespaceBlock>(
+    host_vector<FreespaceBlock*>& blocks, const CudaStream& cuda_stream,
+    const MemoryType memory_type);
+template void initializeBlocksAsync<EsdfBlock>(host_vector<EsdfBlock*>& blocks,
+                                               const CudaStream& cuda_stream,
+                                               const MemoryType memory_type);
+
 }  // namespace nvblox

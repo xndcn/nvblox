@@ -21,7 +21,7 @@ namespace nvblox {
 namespace io {
 
 bool writeLayerCakeToFile(const std::string& filename, const LayerCake& cake,
-                          const CudaStream cuda_stream) {
+                          const CudaStream& cuda_stream) {
   registerCommonTypes();
 
   // Truncate and overwrite by default.

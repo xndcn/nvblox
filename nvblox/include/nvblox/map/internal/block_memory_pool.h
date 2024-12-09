@@ -45,27 +45,30 @@ class BlockMemoryPool {
   /// block. The pool is expanded if there are no more blocks remaining.
   /// @param cuda_stream Used when allocating memory in case the buffer needs
   ///                    expansion. Will be synchronized.
-  typename BlockType::Ptr popBlock(const CudaStream cuda_stream);
+  typename BlockType::Ptr popBlock(const CudaStream& cuda_stream);
 
   /// Return a block to the pool. Should be used instead of de-allocating the
   /// block.
   /// @param block  Block to push
-  void pushBlock(const typename BlockType::Ptr block);
+  void pushBlock(typename BlockType::Ptr block);
 
  private:
   /// Expand the memory pool and synchronize the stream
   void expand(const size_t num_blocks_to_allocate,
-              const CudaStream cuda_stream);
+              const CudaStream& cuda_stream);
 
   /// Container for storing the memory in the pool
   std::stack<typename BlockType::Ptr> blocks_;
+
+  /// Container for storing blocks that should be re-initialized
+  host_vector<BlockType*> recycled_blocks_;
 
   /// Type of memory stored
   MemoryType memory_type_;
   int num_allocated_blocks_ = 0;
 
   /// When expanding the pool, this number is muliplied with the current
-  /// num_allocated_blocks to get the new size.3
+  /// num_allocated_blocks to get the new size.
   static constexpr int kExpansionFactor = 2;
 };
 

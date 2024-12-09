@@ -1,3 +1,6 @@
+if (USE_SYSTEM_EIGEN)
+  find_package(Eigen3 REQUIRED)
+else()
 include(ExternalProject)
 
 ExternalProject_Add(
@@ -15,3 +18,4 @@ target_include_directories(nvblox_eigen SYSTEM INTERFACE
     $<INSTALL_INTERFACE:include/eigen3>
 )
 add_dependencies(nvblox_eigen ext_eigen)
+endif()

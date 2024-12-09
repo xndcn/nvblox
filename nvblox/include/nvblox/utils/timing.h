@@ -91,10 +91,10 @@ class Accumulator {
 
   double Sum() const { return sum_; }
 
-  double Mean() const { return sum_ / totalsamples_; }
+  double Mean() const { return static_cast<double>(sum_) / totalsamples_; }
 
   double RollingMean() const {
-    return window_sum_ / std::min(window_samples_, N);
+    return static_cast<double>(window_sum_) / std::min(window_samples_, N);
   }
 
   double Max() const { return max_; }

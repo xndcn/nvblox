@@ -20,6 +20,7 @@ limitations under the License.
 #include "nvblox/core/parameter_tree.h"
 #include "nvblox/core/types.h"
 #include "nvblox/core/unified_vector.h"
+#include "nvblox/geometry/plane.h"
 #include "nvblox/integrators/esdf_integrator_params.h"
 #include "nvblox/map/blox.h"
 #include "nvblox/map/common_names.h"
@@ -82,20 +83,14 @@ class EsdfIntegrator {
   /// This function takes the voxels between z_min and z_max in the TsdfLayer.
   /// Any obstacle in this z range generates an obstacle in the ESDF output
   /// slice. The 2D ESDF is written to voxels with a single z index in the
-  /// output (i.e. the z_output).
+  /// output.
   /// @param tsdf_layer The input TsdfLayer
   /// @param block_indices The indices of the EsdfLayer which should be updated
   /// (usually because the TSDF at these indices has changed).
-  /// @param z_min The minimum height (in meters) (in the layer frame) at which
-  /// an obstacle is considered.
-  /// @param z_max The maximum height (in meters) (in the layer frame) at which
-  /// an obstacle is considered.
-  /// @param  z_output The height (in meters) (in the layer frame) where the
-  /// ESDF slice is written to.
   /// @param[out] esdf_layer The output EsdfLayer
   void integrateSlice(const TsdfLayer& tsdf_layer,
-                      const std::vector<Index3D>& block_indices, float z_min,
-                      float z_max, float z_output, EsdfLayer* esdf_layer);
+                      const std::vector<Index3D>& block_indices,
+                      EsdfLayer* esdf_layer);
 
   /// Build an EsdfLayer slice from a TsdfLayer and a FreespaceLayer
   /// (incremental) (on GPU)
@@ -108,36 +103,74 @@ class EsdfIntegrator {
   /// ignored if they fall into freespace)
   /// @param block_indices The indices of the EsdfLayer which should be updated
   /// (usually because the TSDF at these indices has changed).
-  /// @param z_min The minimum height (in meters) (in the layer frame) at which
-  /// an obstacle is considered.
-  /// @param z_max The maximum height (in meters) (in the layer frame) at which
-  /// an obstacle is considered.
-  /// @param  z_output The height (in meters) (in the layer frame) where the
-  /// ESDF slice is written to.
   /// @param[out] esdf_layer The output EsdfLayer
   void integrateSlice(const TsdfLayer& tsdf_layer,
                       const FreespaceLayer& freespace_layer,
-                      const std::vector<Index3D>& block_indices, float z_min,
-                      float z_max, float z_output, EsdfLayer* esdf_layer);
+                      const std::vector<Index3D>& block_indices,
+                      EsdfLayer* esdf_layer);
 
   /// Build an EsdfLayer slice from a OccupancyLayer (incremental) (on GPU)
   /// This function takes the voxels between z_min and z_max in the TsdfLayer.
   /// Any obstacle in this z range generates an obstacle in the ESDF output
   /// slice. The 2D ESDF is written to voxels with a single z index in the
-  /// output (i.e. the z_output).
+  /// output.
   /// @param occupancy_layer The input OccupancyLayer
   /// @param block_indices The indices of the EsdfLayer which should be updated
   /// (usually because the Occupancy at these indices has changed).
-  /// @param z_min The minimum height (in meters) (in the layer frame) at which
-  /// an obstacle is considered.
-  /// @param z_max The maximum height (in meters) (in the layer frame) at which
-  /// an obstacle is considered.
-  /// @param  z_output The height (in meters) (in the layer frame) where the
+  /// @param[out] esdf_layer The output EsdfLayer
+  void integrateSlice(const OccupancyLayer& occupancy_layer,
+                      const std::vector<Index3D>& block_indices,
+                      EsdfLayer* esdf_layer);
+
+  /// Build an EsdfLayer slice from a TsdfLayer (incremental) (on GPU)
+  /// This function slices the input layer in a slice above an input
+  /// ground-plane. In particular it slices from slice_height_above_plane_m
+  /// above the grounplane to slice_height thickness above that.
+  /// The 2D ESDF is written to voxels with a single z
+  /// index in the output.
+  /// @param tsdf_layer The input TsdfLayer
+  /// @param block_indices The indices of the EsdfLayer which should be updated
+  /// (usually because the TSDF at these indices has changed).
+  /// @param ground_plane The ground-plane above which we slice.
+  /// @param[out] esdf_layer The output EsdfLayer
+  void integrateSlice(const TsdfLayer& tsdf_layer,
+                      const std::vector<Index3D>& block_indices,
+                      const Plane& ground_plane, EsdfLayer* esdf_layer);
+
+  /// Build an EsdfLayer slice from a TsdfLayer and a FreespaceLayer
+  /// (incremental) (on GPU)
+  /// This function slices the input layer in a slice above an input
+  /// ground-plane. In particular it slices from slice_height_above_plane_m
+  /// above the grounplane to slice_height thickness above that.
+  /// The 2D ESDF if written to a voxels with a
+  /// single z index in the output.
+  /// @param tsdf_layer The input TsdfLayer
+  /// @param freespace_layer The input freespace layer (esdf sites are
+  /// ignored if they fall into freespace)
+  /// @param block_indices The indices of the EsdfLayer which should be updated
+  /// (usually because the TSDF at these indices has changed).
+  /// @param ground_plane The ground-plane above which we slice.
+  /// @param[out] esdf_layer The output EsdfLayer
+  void integrateSlice(const TsdfLayer& tsdf_layer,
+                      const FreespaceLayer& freespace_layer,
+                      const std::vector<Index3D>& block_indices,
+                      const Plane& ground_plane, EsdfLayer* esdf_layer);
+
+  /// Build an EsdfLayer slice from a OccupancyLayer (incremental) (on GPU)
+  /// This function slices the input layer in a slice above an input
+  /// ground-plane. In particular it slices from slice_height_above_plane_m
+  /// above the grounplane to slice_height thickness above that.
+  /// The 2D ESDF is written to voxels with a single z index in the
+  /// output.
+  /// @param occupancy_layer The input OccupancyLayer
+  /// @param block_indices The indices of the EsdfLayer which should be updated
+  /// (usually because the Occupancy at these indices has changed).
+  /// @param ground_plane The ground-plane above which we slice.
   /// ESDF slice is written to.
   /// @param[out] esdf_layer The output EsdfLayer
   void integrateSlice(const OccupancyLayer& occupancy_layer,
-                      const std::vector<Index3D>& block_indices, float z_min,
-                      float z_max, float z_output, EsdfLayer* esdf_layer);
+                      const std::vector<Index3D>& block_indices,
+                      const Plane& ground_plane, EsdfLayer* esdf_layer);
 
   /// A parameter getter
   /// The maximum distance in meters out to which to calculate the ESDF.
@@ -185,6 +218,70 @@ class EsdfIntegrator {
   /// @param occupied_threshold the minimum probability.
   void occupied_threshold(float occupied_threshold);
 
+  /// A parameter getter
+  /// The minimum height, in meters, to consider obstacles part of the 2D ESDF
+  /// slice.
+  /// @returns esdf_slice_min_height
+  float esdf_slice_min_height() const { return esdf_slice_min_height_; }
+
+  /// A parameter setter
+  /// See esdf_slice_min_height().
+  /// @param esdf_slice_min_height
+  void esdf_slice_min_height(const float esdf_slice_min_height) {
+    esdf_slice_min_height_ = esdf_slice_min_height;
+  }
+
+  /// A parameter getter
+  /// The maximum height, in meters, to consider obstacles part of the 2D ESDF
+  /// slice.
+  /// @returns esdf_slice_max_height
+  float esdf_slice_max_height() const { return esdf_slice_max_height_; }
+
+  /// A parameter setter
+  /// See esdf_slice_max_height().
+  /// @param esdf_slice_max_height
+  void esdf_slice_max_height(const float esdf_slice_max_height) {
+    esdf_slice_max_height_ = esdf_slice_max_height;
+  }
+
+  /// A parameter getter
+  /// The output slice height for the distance slice and ESDF pointcloud. Does
+  /// not need to be within min and max height below. In units of meters.
+  /// @returns esdf_slice_height
+  float esdf_slice_height() const { return esdf_slice_height_; }
+
+  /// A parameter setter
+  /// See esdf_slice_height().
+  /// @param esdf_slice_height
+  void esdf_slice_height(const float esdf_slice_height) {
+    esdf_slice_height_ = esdf_slice_height;
+  }
+
+  /// A parameter getter
+  /// The height above the ground plane at which we start slicing (from below).
+  /// @returns slice_height_above_plane_m
+  float slice_height_above_plane_m() const {
+    return slice_height_above_plane_m_;
+  }
+  /// A parameter setter
+  /// See esdf_slice_height().
+  /// @param slice_height_above_plane_m
+  void slice_height_above_plane_m(const float slice_height_above_plane_m) {
+    slice_height_above_plane_m_ = slice_height_above_plane_m;
+  }
+
+  /// A parameter getter
+  /// The height of the slice (in meters) above the lower slice.
+  /// @returns esdf_slice_height
+  float slice_height_thickness_m() const { return slice_height_thickness_m_; }
+
+  /// A parameter setter
+  /// See slice_height_thickness_m().
+  /// @param slice_height_thickness_m
+  void slice_height_thickness_m(const float slice_height_thickness_m) {
+    slice_height_thickness_m_ = slice_height_thickness_m;
+  }
+
   /// Return the parameter tree.
   /// @return the parameter tree
   virtual parameters::ParameterTreeNode getParameterTree(
@@ -198,10 +295,11 @@ class EsdfIntegrator {
       EsdfLayer* esdf_layer,
       const FreespaceLayer* freespace_layer_ptr = nullptr);
 
-  template <typename LayerType>
+  /// Templated version of the public functions above, used internally.
+  template <typename LayerType, typename SliceDescriptionType>
   void integrateSliceTemplate(
       const LayerType& layer, const std::vector<Index3D>& block_indices,
-      float z_min, float z_max, float z_output, EsdfLayer* esdf_layer,
+      const SliceDescriptionType& slice_spec, EsdfLayer* esdf_layer,
       const FreespaceLayer* freespace_layer_ptr = nullptr);
 
   /// Allocate all blocks in the given block indices list.
@@ -223,10 +321,10 @@ class EsdfIntegrator {
   // Same as the markAllSites function above but basically makes the
   // whole operation in 2D. Considers a min and max z in a bounding box which is
   // compressed down into a single layer.
-  template <typename LayerType>
+  template <typename LayerType, typename SliceDescriptionType>
   void markSitesInSlice(const LayerType& layer,
-                        const std::vector<Index3D>& block_indices, float min_z,
-                        float max_z, float output_z,
+                        const std::vector<Index3D>& block_indices,
+                        const SliceDescriptionType& slice_description,
                         const FreespaceLayer* freespace_layer_ptr,
                         EsdfLayer* esdf_layer,
                         device_vector<Index3D>* updated_blocks,
@@ -264,6 +362,14 @@ class EsdfIntegrator {
   /// Minimum weight to consider a TSDF voxel observed.
   float tsdf_min_weight_ = kEsdfIntegratorMinWeightParamDesc.default_value;
 
+  float esdf_slice_min_height_ = kEsdfSliceMinHeightParamDesc.default_value;
+  float esdf_slice_max_height_ = kEsdfSliceMaxHeightParamDesc.default_value;
+  float esdf_slice_height_ = kEsdfSliceHeightParamDesc.default_value;
+  float slice_height_above_plane_m_ =
+      kSliceHeightAbovePlaneMParamDesc.default_value;
+  float slice_height_thickness_m_ =
+      kSliceHeightThicknessMParamDesc.default_value;
+
   /// @brief OccupancyLayer related parameter
   /// The log odds value greater than which we consider a voxel occupied
   float occupied_threshold_log_odds_ = logOddsFromProbability(0.5f);
@@ -282,12 +388,14 @@ class EsdfIntegrator {
   host_vector<Index3D> temp_indices_host_;
   device_vector<Index3D> cleared_block_indices_device_;
 
-  unified_ptr<int> updated_counter_device_;
-  unified_ptr<int> updated_counter_host_;
-  unified_ptr<int> cleared_counter_device_;
-  unified_ptr<int> cleared_counter_host_;
-  int* counter_buffer_device_;
-  int* counter_buffer_host_;
+  unified_ptr<int> updated_counter_device_ =
+      make_unified<int>(MemoryType::kDevice);
+  unified_ptr<int> updated_counter_host_ = make_unified<int>(MemoryType::kHost);
+  unified_ptr<int> cleared_counter_device_ =
+      make_unified<int>(MemoryType::kDevice);
+  unified_ptr<int> cleared_counter_host_ = make_unified<int>(MemoryType::kHost);
+  device_vector<int> counter_buffer_device_{2};
+  host_vector<int> counter_buffer_host_{2};
 
   device_vector<EsdfBlock*> temp_block_pointers_;
 };

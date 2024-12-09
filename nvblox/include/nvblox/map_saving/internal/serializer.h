@@ -45,10 +45,11 @@ class Serializer {
             std::ios_base::openmode openmode = std::ios::in);
 
   /// Load a layer cake from the opened file of a given memory type.
-  LayerCake loadLayerCake(MemoryType memory_type, const CudaStream cuda_stream);
+  LayerCake loadLayerCake(MemoryType memory_type,
+                          const CudaStream& cuda_stream);
 
   /// Write out a layer cake to the opened file, return success.
-  bool writeLayerCake(const LayerCake& cake, const CudaStream cuda_stream);
+  bool writeLayerCake(const LayerCake& cake, const CudaStream& cuda_stream);
 
   /// Close the file.
   bool close();

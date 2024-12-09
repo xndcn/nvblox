@@ -17,10 +17,17 @@ limitations under the License.
 
 #include "nvblox/gpu_hash/internal/cuda/gpu_hash_interface.cuh"
 #include "nvblox/gpu_hash/internal/cuda/gpu_indexing.cuh"
+#include "nvblox/integrators/internal/cuda/projective_integrators_common.cuh"
 #include "nvblox/integrators/internal/integrators_common.h"
 #include "nvblox/utils/timing.h"
 
 namespace nvblox {
+
+constexpr int kMaxPaddingSize = 1;
+constexpr int kMaxNumThreads1D =
+    TsdfBlock::kVoxelsPerSide + 2 * kMaxPaddingSize;
+constexpr int kMaxPaddedKernelThreadNum =
+    kMaxNumThreads1D * kMaxNumThreads1D * kMaxNumThreads1D;
 
 static_assert(TsdfBlock::kVoxelsPerSide == FreespaceBlock::kVoxelsPerSide,
               "Need same block dimensions for tsdf and freespace blocks");
@@ -31,10 +38,6 @@ __device__ void clamp(Index3D& index, int minval, int maxval) {
     index(i) = std::max(std::min(index(i), maxval), minval);
   }
 }
-
-// Number of padded voxels appended to each side of a block in order to
-// allow for filtering. Currently only 1 is supported.
-constexpr int kPaddingSize = 1;
 
 // Class for storing a neighborhood of 3x3x3 block pointers. This allows for
 // faster lookup of voxels, compared to using a hashmap.
@@ -62,11 +65,12 @@ class BlockNeighborhood {
   __device__ void populateBlock(
       const Index3D& center_block_index,
       const Index3DDeviceHashMapType<VoxelBlock<VoxelType>>& block_hash) {
-    // This will be set by all threads, but that's alright since they all write
-    // the same value.
-    topleft_block_index_ = {center_block_index.x() - 1,
-                            center_block_index.y() - 1,
-                            center_block_index.z() - 1};
+    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+      topleft_block_index_ = {center_block_index.x() - 1,
+                              center_block_index.y() - 1,
+                              center_block_index.z() - 1};
+    }
+    __syncthreads();
 
     // Let the first few threads populate the block pointers.
     if (threadIdx.x < kNumBlocks1D && threadIdx.y < kNumBlocks1D &&
@@ -144,14 +148,14 @@ class BlockNeighborhood {
 // preceeds the block dimensions will return a voxel in the neighboring block,
 // for example {0, -1, 0} will return a voxel from the neighbor in negative-Y
 // direction. and {0, 10, 0} will refer to a block in the positive-Y direction.
-template <typename VoxelType>
+template <typename VoxelType, int PaddingSize>
 class PaddedBlock {
   using BlockType = VoxelBlock<VoxelType>;
 
  public:
   // Size definitions. Cannot be changed
   static constexpr int kVoxelsPerSide = TsdfBlock::kVoxelsPerSide;
-  static constexpr int kVoxelsPerSidePadded = kVoxelsPerSide + 2 * kPaddingSize;
+  static constexpr int kVoxelsPerSidePadded = kVoxelsPerSide + 2 * PaddingSize;
 
   // Populate the voxel at voxel_index by looking it up in block_neighbors
   __device__ void populateVoxel(
@@ -159,8 +163,8 @@ class PaddedBlock {
       const BlockNeighborhood<VoxelType>& block_neighbors) {
     // We will write to this padded block index
     const Index3D target_voxel_index =
-        Index3D(voxel_index.x() + kPaddingSize, voxel_index.y() + kPaddingSize,
-                voxel_index.z() + kPaddingSize);
+        Index3D(voxel_index.x() + PaddingSize, voxel_index.y() + PaddingSize,
+                voxel_index.z() + PaddingSize);
 
     // Determine which block/voxel we will read from.
     Index3D source_block_index = center_block_index;
@@ -212,14 +216,12 @@ class PaddedBlock {
 
   // Access functions.
   __device__ VoxelType& at(const Index3D& voxel_index) {
-    return voxels_[voxel_index.x() + kPaddingSize]
-                  [voxel_index.y() + kPaddingSize]
-                  [voxel_index.z() + kPaddingSize];
+    return voxels_[voxel_index.x() + PaddingSize][voxel_index.y() + PaddingSize]
+                  [voxel_index.z() + PaddingSize];
   }
   __device__ const VoxelType& at(const Index3D& voxel_index) const {
-    return voxels_[voxel_index.x() + kPaddingSize]
-                  [voxel_index.y() + kPaddingSize]
-                  [voxel_index.z() + kPaddingSize];
+    return voxels_[voxel_index.x() + PaddingSize][voxel_index.y() + PaddingSize]
+                  [voxel_index.z() + PaddingSize];
   }
 
  private:
@@ -227,27 +229,30 @@ class PaddedBlock {
                    [kVoxelsPerSidePadded];
 };  // namespace nvblox
 
-// Return true if the voxel is free according to Dynablox Eq. (10) (single
-// voxel)
+// Return true if the voxel is free, i.e. if these three critera are satisfied:
+// * The corresponding TSDF voxel is active
+// * Voxel must be initialized
+// * Voxel have not been recently occupied
 __device__ bool isVoxelFree(const FreespaceVoxel& freespace_voxel,
                             const TsdfVoxel& tsdf_voxel, Time current_time_ms,
                             Time min_duration_since_occupied_for_freespace_ms) {
   return tsdf_voxel.weight > 1e-6 &&
+         (freespace_voxel.last_occupied_timestamp_ms != Time(0)) &&
          freespace_voxel.last_occupied_timestamp_ms <=
              current_time_ms - min_duration_since_occupied_for_freespace_ms;
 }
-
 // Return true if all voxels in a neighborhood are free.
+template <int PaddingSize>
 __device__ bool isVoxelNeighborhoodFree(
     const Index3D& voxel_index,
-    const PaddedBlock<FreespaceVoxel>& freespace_block_padded,
-    const PaddedBlock<TsdfVoxel>& tsdf_block_padded, Time current_time_ms,
-    Time min_duration_since_occupied_for_freespace_ms) {
+    const PaddedBlock<FreespaceVoxel, PaddingSize>& freespace_block_padded,
+    const PaddedBlock<TsdfVoxel, PaddingSize>& tsdf_block_padded,
+    Time current_time_ms, Time min_duration_since_occupied_for_freespace_ms) {
   bool neighborhood_is_free = true;
 
-  for (int x = -kPaddingSize; x <= kPaddingSize; x++) {
-    for (int y = -kPaddingSize; y <= kPaddingSize; y++) {
-      for (int z = -kPaddingSize; z <= kPaddingSize; z++) {
+  for (int x = -PaddingSize; x <= PaddingSize; x++) {
+    for (int y = -PaddingSize; y <= PaddingSize; y++) {
+      for (int z = -PaddingSize; z <= PaddingSize; z++) {
         if (x == 0 && y == 0 && z == 0) {
           continue;  // Do not add the original voxel.
         }
@@ -266,16 +271,35 @@ __device__ bool isVoxelNeighborhoodFree(
   return neighborhood_is_free;
 }
 
-__global__ void updateFreespaceLayerKernel(
-    const Index3DDeviceHashMapType<TsdfBlock> tsdf_block_hash,
-    const Index3D* block_indices_to_update, float voxel_size,
-    float max_tsdf_distance_for_occupancy_m,
-    Time max_unobserved_to_keep_consecutive_occupancy_ms,
-    Time min_duration_since_occupied_for_freespace_ms,
-    Time min_consecutive_occupancy_duration_for_reset_ms,
-    bool check_neighborhood, Time last_update_time_ms,
-    Time current_update_time_ms,
-    Index3DDeviceHashMapType<FreespaceBlock> freespace_block_hash) {
+// Kernel for freespace update
+// Expected launch parameters:
+//   num_blocks: Number of voxelblocks in the freespace layer
+//   num_threads_per_block: dim3(a, a, a) where a = voxels_per_side +
+//   2*PaddingSize
+// @tparam PaddingSize Number of padded voxels appended to each side of a block
+// to  allow for lookup of neighboring blocks.
+//  Should be set to "1" if check_neighborhood is used. Set to "0" otherwise for
+//  improved performance
+// NOTE(alexmillane): We faced an issue where in debug mode, this kernel blew
+// the device register limits, and crashed on launch. We're therefore using
+// __launch_bounds__ to inform the compiler of the maximum number of threads
+// that it will be launched with such that it can respect the register limit in
+// the worst-case thread number.
+template <int PaddingSize = 1>
+__global__ void __launch_bounds__(kMaxPaddedKernelThreadNum)
+    updateFreespaceLayerKernel(
+        const Index3DDeviceHashMapType<TsdfBlock> tsdf_block_hash,
+        const Index3D* block_indices_to_update, float voxel_size,
+        float max_tsdf_distance_for_occupancy_m,
+        Time max_unobserved_to_keep_consecutive_occupancy_ms,
+        Time min_duration_since_occupied_for_freespace_ms,
+        Time min_consecutive_occupancy_duration_for_reset_ms,
+        bool check_neighborhood, Time last_update_time_ms,
+        Time current_update_time_ms, const bool do_viewpoint_exclusion,
+        const Camera camera, const Transform T_C_L,
+        DepthImageConstView depth_image, float max_view_distance_m,
+        float truncation_distance_m, float block_size_m,
+        Index3DDeviceHashMapType<FreespaceBlock> freespace_block_hash) {
   // This kernel implements the freespace update as described in the
   // dynablox paper (https://ieeexplore.ieee.org/document/10218983).
   //
@@ -287,13 +311,17 @@ __global__ void updateFreespaceLayerKernel(
   //   is/are free
   // - Update the is_high_confidence_freespace field
   // Every ThreadBlock works on one VoxelBlock (blockIdx.y/z should be zero)
+
+  // Need padding if we're checking for neighbors
+  assert(!check_neighborhood || PaddingSize == 1);
+
   const Index3D block_index = block_indices_to_update[blockIdx.x];
 
   // Since a thread block also includes padded voxels, we obtain the
   // actual voxel index by subtracting the border size from thread indices.
   const Index3D voxel_index =
-      Index3D(threadIdx.z - kPaddingSize, threadIdx.y - kPaddingSize,
-              threadIdx.x - kPaddingSize);
+      Index3D(threadIdx.z - PaddingSize, threadIdx.y - PaddingSize,
+              threadIdx.x - PaddingSize);
 
   // Lookup all block pointers in a 3x3x3 neighborhood around block_index and
   // store them in shared memory. This saves us from excessive and expensive
@@ -307,89 +335,119 @@ __global__ void updateFreespaceLayerKernel(
   // Populate shared memory with voxels from the current block. We also copy an
   // additional padded voxel layerborder around the block to allow filtering at
   // the border
-  __shared__ PaddedBlock<FreespaceVoxel> freespace_block_padded;
+  __shared__ PaddedBlock<FreespaceVoxel, PaddingSize> freespace_block_padded;
   freespace_block_padded.populateVoxel(voxel_index, block_index,
                                        freespace_block_neighbors);
 
-  __shared__ PaddedBlock<TsdfVoxel> tsdf_block_padded;
+  __shared__ PaddedBlock<TsdfVoxel, PaddingSize> tsdf_block_padded;
   tsdf_block_padded.populateVoxel(voxel_index, block_index,
                                   tsdf_block_neighbors);
   __syncthreads();
 
-  // Get the freespace voxel
-  FreespaceVoxel* freespace_voxel = &freespace_block_padded.at(voxel_index);
-
-  // Initialization of freespace
-  if (freespace_voxel->last_occupied_timestamp_ms == Time(0)) {
-    // All voxels are initialized to being occupied
-    freespace_voxel->last_occupied_timestamp_ms = current_update_time_ms;
-    freespace_voxel->consecutive_occupancy_duration_ms = Time(0);
-    freespace_voxel->is_high_confidence_freespace = false;
-  } else {
-    // Get the corresponding tsdf voxel
-    TsdfVoxel* tsdf_voxel = &tsdf_block_padded.at(voxel_index);
-
-    // Update consecutive occupancy duration
-    // Note: We use the last_occupied_timestamp_ms from the last update here to
-    // start counting the consecutive_occupancy_duration_ms from 0 ms when a
-    // voxel was seen occupied. Dynablox Eq. (9)
-    if (current_update_time_ms - freespace_voxel->last_occupied_timestamp_ms <=
-        max_unobserved_to_keep_consecutive_occupancy_ms) {
-      // Voxel was occupied lately
-      freespace_voxel->consecutive_occupancy_duration_ms +=
-          current_update_time_ms - last_update_time_ms;
-    } else {
-      // We haven't seen the voxel occupied for some time
-      freespace_voxel->consecutive_occupancy_duration_ms = Time(0);
-    }
-
-    // Update the last occupied timestamp
-    // Dynablox Eq. (8)
-    if (tsdf_voxel->distance <= max_tsdf_distance_for_occupancy_m) {
-      // We are close to a surface, let's assume the voxel is occupied
-      freespace_voxel->last_occupied_timestamp_ms = current_update_time_ms;
-    }
-
-    // Check if the voxel is free
-    bool is_free =
-        isVoxelFree(*freespace_voxel, *tsdf_voxel, current_update_time_ms,
-                    min_duration_since_occupied_for_freespace_ms);
-
-    // Synchronize here because the last_occupied_timestamp_ms field of the
-    // neighboring voxels could have been updated during this kernel. This is
-    // strictly only necessary if check_neighborhood=true, but syncing inside an
-    // if-statement is not recommended since it might lead to a deadlock if
-    // threads are diverging.
-    __syncthreads();
-
-    // Check if neighbors are free as well
-    // Dynablox Eq. (10) (neighborhood)
-    if (check_neighborhood && is_free &&
-        tsdf_block_padded.isWithinBlockBounds(voxel_index)) {
-      is_free &= isVoxelNeighborhoodFree(
-          voxel_index, freespace_block_padded, tsdf_block_padded,
-          current_update_time_ms, min_duration_since_occupied_for_freespace_ms);
-    }
-
-    // Update high confidence freespace
-    // Dynablox Eq. (12)
-    if (freespace_voxel->consecutive_occupancy_duration_ms >=
-        min_consecutive_occupancy_duration_for_reset_ms) {
-      // There was consecutive occupancy for some time: reset freespace
-      freespace_voxel->is_high_confidence_freespace = false;
-    } else {
-      // Otherwise high confidence freespace is set if the voxel is free
-      // and kept if it was high confidence before
-      // Dynablox Eq. (11)
-      freespace_voxel->is_high_confidence_freespace =
-          freespace_voxel->is_high_confidence_freespace || is_free;
+  // Only do the updates if we're in-view.
+  bool update_voxel = true;
+  if (do_viewpoint_exclusion) {
+    assert(depth_image.dataConstPtr() != nullptr);
+    const bool in_view = doesVoxelHaveDepthMeasurement(
+        block_index, voxel_index, camera, depth_image.dataConstPtr(),
+        depth_image.rows(), depth_image.cols(), T_C_L, block_size_m,
+        max_view_distance_m, truncation_distance_m);
+    // If not in view, don't run updates.
+    if (!in_view) {
+      update_voxel = false;
     }
   }
 
-  // Copy shared mem back to global
-  if (tsdf_block_padded.isWithinBlockBounds(voxel_index)) {
-    freespace_block_neighbors.setVoxel(block_index, voxel_index,
-                                       *freespace_voxel);
+  // NOTE(alexmillane): We don't want to run the rest of this function for
+  // voxels out-of-view. However because of the remaining syncthreads we cannot
+  // exit early for some threads, so we put the remaining operations in
+  // conditionals.
+  FreespaceVoxel* freespace_voxel;
+  bool is_free;
+  bool initialize_freespace_voxel;
+  if (update_voxel) {
+    // Get the freespace voxel
+    freespace_voxel = &freespace_block_padded.at(voxel_index);
+
+    // Initialization of freespace
+    initialize_freespace_voxel =
+        freespace_voxel->last_occupied_timestamp_ms == Time(0);
+    // Get the corresponding tsdf voxel
+    TsdfVoxel* tsdf_voxel = &tsdf_block_padded.at(voxel_index);
+    if (initialize_freespace_voxel) {
+      // All voxels are initialized to being occupied
+      freespace_voxel->last_occupied_timestamp_ms = current_update_time_ms;
+      freespace_voxel->consecutive_occupancy_duration_ms = Time(0);
+      freespace_voxel->is_high_confidence_freespace = false;
+    } else {
+      // Update consecutive occupancy duration
+      // Note: We use the last_occupied_timestamp_ms from the last update here
+      // to start counting the consecutive_occupancy_duration_ms from 0 ms when
+      // a voxel was seen occupied. Dynablox Eq. (9)
+      if (current_update_time_ms -
+              freespace_voxel->last_occupied_timestamp_ms <=
+          max_unobserved_to_keep_consecutive_occupancy_ms) {
+        // Voxel was occupied lately
+        freespace_voxel->consecutive_occupancy_duration_ms +=
+            current_update_time_ms - last_update_time_ms;
+      } else {
+        // We haven't seen the voxel occupied for some time
+        freespace_voxel->consecutive_occupancy_duration_ms = Time(0);
+      }
+
+      // Update the last occupied timestamp
+      // Dynablox Eq. (8)
+      if (tsdf_voxel->distance <= max_tsdf_distance_for_occupancy_m) {
+        // We are close to a surface, let's assume the voxel is occupied
+        freespace_voxel->last_occupied_timestamp_ms = current_update_time_ms;
+      }
+    }
+
+    // Check if the voxel is free
+    is_free = isVoxelFree(*freespace_voxel, *tsdf_voxel, current_update_time_ms,
+                          min_duration_since_occupied_for_freespace_ms);
+  }
+
+  // Synchronize here because the last_occupied_timestamp_ms field of the
+  // neighboring voxels could have been updated during this kernel. This is
+  // strictly only necessary if check_neighborhood=true, but syncing inside an
+  // if-statement is not recommended since it might lead to a deadlock if
+  // threads are diverging.
+  __syncthreads();
+
+  // NOTE: See comment above about the reason for "update_voxel".
+  if (update_voxel) {
+    if (!initialize_freespace_voxel) {
+      // Check if neighbors are free as well
+      // Dynablox Eq. (10) (neighborhood)
+      if (check_neighborhood && is_free &&
+          tsdf_block_padded.isWithinBlockBounds(voxel_index)) {
+        is_free &= isVoxelNeighborhoodFree(
+            voxel_index, freespace_block_padded, tsdf_block_padded,
+            current_update_time_ms,
+            min_duration_since_occupied_for_freespace_ms);
+      }
+
+      // Update high confidence freespace
+      // Dynablox Eq. (12)
+      if (freespace_voxel->consecutive_occupancy_duration_ms >=
+          min_consecutive_occupancy_duration_for_reset_ms) {
+        // There was consecutive occupancy for some time: reset freespace
+        freespace_voxel->is_high_confidence_freespace = false;
+      } else {
+        // Otherwise high confidence freespace is set if the voxel is free
+        // and kept if it was high confidence before
+        // Dynablox Eq. (11)
+        freespace_voxel->is_high_confidence_freespace =
+            freespace_voxel->is_high_confidence_freespace || is_free;
+      }
+    }
+
+    // Copy shared mem back to global
+    if (tsdf_block_padded.isWithinBlockBounds(voxel_index)) {
+      freespace_block_neighbors.setVoxel(block_index, voxel_index,
+                                         *freespace_voxel);
+    }
   }
 }
 
@@ -471,9 +529,134 @@ parameters::ParameterTreeNode FreespaceIntegrator::getParameterTree(
       });
 }
 
+// This function just:
+// - Returns a bool indicating if viewpoint exclusion should be run, and
+// - breaks apart the viewpoint into types which can be passed to the kernel,
+// and
+// - if not requested returns default values.
+auto get_viewpoint_or_defaults(
+    const std::optional<ViewBasedInclusionData>& maybe_view) {
+  bool do_viewpoint_exclusion = false;
+  float truncation_distance_m;
+  float max_view_distance_m;
+  DepthImageConstView depth_image;
+  Camera camera;
+  Transform T_L_C;
+  if (maybe_view.has_value() && maybe_view.value().depth_image.has_value()) {
+    do_viewpoint_exclusion = true;
+    const auto& view = maybe_view.value();
+    T_L_C = view.T_L_C;
+    camera = view.camera;
+    max_view_distance_m =
+        view.max_view_distance_m.value_or(std::numeric_limits<float>::max());
+    truncation_distance_m =
+        view.truncation_distance_m.value_or(std::numeric_limits<float>::max());
+    CHECK_NOTNULL(view.depth_image.value());
+    depth_image = DepthImageConstView(*view.depth_image.value());
+  } else if (maybe_view.has_value()) {
+    LOG(WARNING) << "We only support viewpoint exclusion with a depth image.";
+  }
+
+  // Post-condition. Just make sure everything is valid
+  if (do_viewpoint_exclusion) {
+    CHECK_NOTNULL(depth_image.dataConstPtr());
+    CHECK_GT(depth_image.rows(), 0);
+    CHECK_GT(depth_image.cols(), 0);
+    CHECK_GT(camera.fu(), 0);
+    CHECK_GT(camera.fv(), 0);
+    CHECK_GT(truncation_distance_m, 0);
+    CHECK_GT(max_view_distance_m, 0);
+  }
+  return std::make_tuple(do_viewpoint_exclusion, T_L_C, camera, depth_image,
+                         max_view_distance_m, truncation_distance_m);
+}
+
+void FreespaceIntegrator::launchNonPaddedKernel(
+    Time update_time_ms, const TsdfLayer& tsdf_layer,
+    const std::optional<ViewBasedInclusionData>& maybe_view,
+    FreespaceLayer* freespace_layer_ptr) {
+  const dim3 kThreadsPerBlock(TsdfBlock::kVoxelsPerSide,
+                              TsdfBlock::kVoxelsPerSide,
+                              TsdfBlock::kVoxelsPerSide);
+  const int num_thread_blocks = block_indices_to_update_device_.size();
+
+  // Break-up the optional into parts for kernel, if viewpoint exclusion
+  // requested (otherwise the first returned bool will be false).
+  auto [do_viewpoint_exclusion, T_L_C, camera, depth_image, max_view_distance_m,
+        truncation_distance_m] = get_viewpoint_or_defaults(maybe_view);
+
+  constexpr int kPaddingSize = 0;
+  static_assert(kPaddingSize < kMaxPaddingSize);
+  updateFreespaceLayerKernel<kPaddingSize>
+      <<<num_thread_blocks, kThreadsPerBlock, 0,
+         *cuda_stream_>>>(
+          tsdf_layer.getGpuLayerView(*cuda_stream_).getHash().impl_,  // NOLINT
+          block_indices_to_update_device_.data(),                     // NOLINT
+          freespace_layer_ptr->voxel_size(),                          // NOLINT
+          max_tsdf_distance_for_occupancy_m_,                         // NOLINT
+          max_unobserved_to_keep_consecutive_occupancy_ms_,           // NOLINT
+          min_duration_since_occupied_for_freespace_ms_,              // NOLINT
+          min_consecutive_occupancy_duration_for_reset_ms_,           // NOLINT
+          check_neighborhood_,                                        // NOLINT
+          last_update_time_ms_,                                       // NOLINT
+          update_time_ms,                                             // NOLINT
+          do_viewpoint_exclusion,                                     // NOLINT
+          camera,                                                     // NOLINT
+          T_L_C.inverse(),                                            // NOLINT
+          depth_image, max_view_distance_m, truncation_distance_m,    // NOLINT
+          freespace_layer_ptr->block_size(),                          // NOLINT
+          freespace_layer_ptr->getGpuLayerView(*cuda_stream_).getHash().impl_);
+  checkCudaErrors(cudaPeekAtLastError());
+}
+
+void FreespaceIntegrator::launchPaddedKernel(
+    Time update_time_ms, const TsdfLayer& tsdf_layer,
+    const std::optional<ViewBasedInclusionData>& maybe_view,
+    FreespaceLayer* freespace_layer_ptr) {
+  constexpr int kPaddingSize = 1;
+  constexpr int kNumThreads1D = TsdfBlock::kVoxelsPerSide + 2 * kPaddingSize;
+  const dim3 kThreadsPerBlock(kNumThreads1D, kNumThreads1D, kNumThreads1D);
+  const int num_thread_blocks = block_indices_to_update_device_.size();
+
+  // Break-up the optional into parts for kernel, if viewpoint exclusion
+  // requested (otherwise the first returned bool will be false).
+  auto [do_viewpoint_exclusion, T_L_C, camera, depth_image,  // rows, cols,
+        max_view_distance_m, truncation_distance_m] =
+      get_viewpoint_or_defaults(maybe_view);
+
+  static_assert(kPaddingSize <= kMaxPaddingSize);
+  updateFreespaceLayerKernel<kPaddingSize>
+      <<<num_thread_blocks, kThreadsPerBlock, 0,
+         *cuda_stream_>>>(
+          tsdf_layer.getGpuLayerView(*cuda_stream_).getHash().impl_,  // NOLINT
+          block_indices_to_update_device_.data(),                     // NOLINT
+          freespace_layer_ptr->voxel_size(),                          // NOLINT
+          max_tsdf_distance_for_occupancy_m_,                         // NOLINT
+          max_unobserved_to_keep_consecutive_occupancy_ms_,           // NOLINT
+          min_duration_since_occupied_for_freespace_ms_,              // NOLINT
+          min_consecutive_occupancy_duration_for_reset_ms_,           // NOLINT
+          check_neighborhood_,                                        // NOLINT
+          last_update_time_ms_,                                       // NOLINT
+          update_time_ms,                                             // NOLINT
+          do_viewpoint_exclusion,                                     // NOLINT
+          camera,                                                     // NOLINT
+          T_L_C.inverse(),                                            // NOLINT
+          depth_image,                                                // NOLINT
+          max_view_distance_m,                                        // NOLINT
+          truncation_distance_m,                                      // NOLINT
+          freespace_layer_ptr->block_size(),                          // NOLINT
+          freespace_layer_ptr->getGpuLayerView(*cuda_stream_)
+              .getHash()
+              .impl_  // NOLINT
+      );
+  checkCudaErrors(cudaPeekAtLastError());
+}
+
 void FreespaceIntegrator::updateFreespaceLayer(
     const std::vector<Index3D>& block_indices_to_update, Time update_time_ms,
-    const TsdfLayer& tsdf_layer, FreespaceLayer* freespace_layer_ptr) {
+    const TsdfLayer& tsdf_layer,
+    const std::optional<ViewBasedInclusionData>& view,
+    FreespaceLayer* freespace_layer_ptr) {
   timing::Timer integration_timer("freespace/integrate");
 
   // Check inputs
@@ -484,7 +667,6 @@ void FreespaceIntegrator::updateFreespaceLayer(
     return;
   }
   const size_t num_block_to_update = block_indices_to_update.size();
-  current_update_time_ms_ = update_time_ms;
 
   // Allocate missing blocks
   timing::Timer allocate_timer("freespace/integrate/allocate");
@@ -506,33 +688,31 @@ void FreespaceIntegrator::updateFreespaceLayer(
                                 &block_indices_to_update_host_,
                                 &block_indices_to_update_device_);
 
-  // Kernel configuration:
-  // - One threadBlock per VoxelBlock
-  // - NxNxN threads where N is the block side-length in voxels.
-  constexpr int kNumThreads1D = TsdfBlock::kVoxelsPerSide + 2 * kPaddingSize;
-  const dim3 kThreadsPerBlock(kNumThreads1D, kNumThreads1D, kNumThreads1D);
-  const int num_thread_blocks = num_block_to_update;
+  if (check_neighborhood_) {
+    launchPaddedKernel(update_time_ms, tsdf_layer, view, freespace_layer_ptr);
+  } else {
+    launchNonPaddedKernel(update_time_ms, tsdf_layer, view,
+                          freespace_layer_ptr);
+  }
 
-  updateFreespaceLayerKernel<<<num_thread_blocks, kThreadsPerBlock, 0,
-                               *cuda_stream_>>>(
-      tsdf_layer.getGpuLayerViewAsync(*cuda_stream_).getHash().impl_,  // NOLINT
-      block_indices_to_update_device_.data(),                          // NOLINT
-      freespace_layer_ptr->voxel_size(),                               // NOLINT
-      max_tsdf_distance_for_occupancy_m_,                              // NOLINT
-      max_unobserved_to_keep_consecutive_occupancy_ms_,                // NOLINT
-      min_duration_since_occupied_for_freespace_ms_,                   // NOLINT
-      min_consecutive_occupancy_duration_for_reset_ms_,                // NOLINT
-      check_neighborhood_,                                             // NOLINT
-      last_update_time_ms_,                                            // NOLINT
-      current_update_time_ms_,                                         // NOLINT
-      freespace_layer_ptr->getGpuLayerViewAsync(*cuda_stream_)
-          .getHash()
-          .impl_  // NOLINT
-  );
   cuda_stream_->synchronize();
-  checkCudaErrors(cudaPeekAtLastError());
 
   last_update_time_ms_ = update_time_ms;
 }
+
+// void FreespaceIntegrator::updateFreespaceLayer(
+//     const std::vector<Index3D>& block_indices_to_update, Time update_time_ms,
+//     const TsdfLayer& tsdf_layer, FreespaceLayer* freespace_layer_ptr) {
+//   updateFreespaceLayer(block_indices_to_update, update_time_ms, tsdf_layer,
+//                        std::nullopt, freespace_layer_ptr);
+// }
+
+// void FreespaceIntegrator::updateFreespaceLayer(
+//     const std::vector<Index3D>& block_indices_to_update, Time update_time_ms,
+//     const TsdfLayer& tsdf_layer, const ViewBasedInclusionData&
+//     view_to_update, FreespaceLayer* freespace_layer_ptr) {
+//   updateFreespaceLayer(block_indices_to_update, update_time_ms, tsdf_layer,
+//                        view_to_update, freespace_layer_ptr);
+// }
 
 }  // namespace nvblox

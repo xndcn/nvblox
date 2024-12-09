@@ -26,19 +26,19 @@ namespace nvblox {
 template <typename BlockType>
 void BlockLayer<BlockType>::copyFrom(const BlockLayer& other) {
   block_size_ = other.block_size_;
-  gpu_layer_view_up_to_date_ = false;
 
   copyFromAsync(other, CudaStreamOwning());
 }
 
 template <typename BlockType>
 void BlockLayer<BlockType>::copyFromAsync(const BlockLayer& other,
-                                          const CudaStream cuda_stream) {
+                                          const CudaStream& cuda_stream) {
   LOG(INFO) << "Deep copy of BlockLayer containing "
             << other.numAllocatedBlocks() << " blocks.";
 
+  blocks_.clear();
+
   block_size_ = other.block_size_;
-  gpu_layer_view_up_to_date_ = false;
 
   // Re-create all the blocks.
   std::vector<Index3D> all_block_indices = other.getAllBlockIndices();
@@ -49,9 +49,13 @@ void BlockLayer<BlockType>::copyFromAsync(const BlockLayer& other,
     if (block == nullptr) {
       continue;
     }
+
     typename BlockType::Ptr new_block = memory_pool_.popBlock(cuda_stream);
     new_block.copyFromAsync(block, cuda_stream);
+
     blocks_.emplace(block_index, new_block);
+    gpu_layer_view_->insertBlockAsync(
+        thrust::make_pair(block_index, new_block.get()), cuda_stream);
   }
 }
 
@@ -87,11 +91,14 @@ typename BlockType::Ptr BlockLayer<BlockType>::allocateBlockAtIndexAsync(
   if (it != blocks_.end()) {
     return it->second;
   } else {
-    // Invalidate the GPU hash
-    gpu_layer_view_up_to_date_ = false;
+    // Blocks define their own method for allocation.
+    auto new_block = memory_pool_.popBlock(cuda_stream);
+    auto insert_status = blocks_.emplace(index, new_block);
 
-    auto insert_status =
-        blocks_.emplace(index, memory_pool_.popBlock(cuda_stream));
+    if (insert_status.second) {
+      gpu_layer_view_->insertBlockAsync(
+          thrust::make_pair(index, new_block.get()), cuda_stream);
+    }
     return insert_status.first->second;
   }
 }
@@ -162,6 +169,18 @@ std::vector<BlockType*> BlockLayer<BlockType>::getAllBlockPointers() {
 }
 
 template <typename BlockType>
+std::vector<const BlockType*> BlockLayer<BlockType>::getAllBlockPointers()
+    const {
+  std::vector<const BlockType*> block_ptrs;
+  block_ptrs.reserve(blocks_.size());
+
+  for (auto& kv : blocks_) {
+    block_ptrs.push_back(kv.second.get());
+  }
+  return block_ptrs;
+}
+
+template <typename BlockType>
 std::vector<Index3D> BlockLayer<BlockType>::getBlockIndicesIf(
     std::function<bool(const Index3D&)> predicate) const {
   std::vector<Index3D> all_indices = getAllBlockIndices();
@@ -179,17 +198,25 @@ bool BlockLayer<BlockType>::isBlockAllocated(const Index3D& index) const {
 
 template <typename BlockType>
 void BlockLayer<BlockType>::clear() {
-  gpu_layer_view_up_to_date_ = false;
   blocks_.clear();
+  gpu_layer_view_->reset();
 }
 
 template <typename BlockType>
 bool BlockLayer<BlockType>::clearBlock(const Index3D& index) {
+  return clearBlockAsync(index, CudaStreamOwning());
+}
+
+template <typename BlockType>
+bool BlockLayer<BlockType>::clearBlockAsync(const Index3D& index,
+                                            const CudaStream& cuda_stream) {
   auto it = blocks_.find(index);
   if (it != blocks_.end()) {
+    // return the block to the memory pool and remove it from the CPU hash
     memory_pool_.pushBlock(it->second);
     blocks_.erase(it);
-    gpu_layer_view_up_to_date_ = false;
+
+    gpu_layer_view_->removeBlockAsync(index, cuda_stream);
     return true;
   } else {
     return false;
@@ -198,30 +225,29 @@ bool BlockLayer<BlockType>::clearBlock(const Index3D& index) {
 
 template <typename BlockType>
 void BlockLayer<BlockType>::clearBlocks(const std::vector<Index3D>& indices) {
+  clearBlocksAsync(indices, CudaStreamOwning());
+}
+
+template <typename BlockType>
+void BlockLayer<BlockType>::clearBlocksAsync(
+    const std::vector<Index3D>& indices, const CudaStream& cuda_stream) {
   for (const auto& idx : indices) {
-    clearBlock(idx);
+    clearBlockAsync(idx, cuda_stream);
   }
 }
 
 template <typename BlockType>
-typename BlockLayer<BlockType>::GPULayerViewType
-BlockLayer<BlockType>::getGpuLayerView() const {
-  return getGpuLayerViewAsync(CudaStreamOwning());
+void BlockLayer<BlockType>::updateGpuHash(const CudaStream& cuda_stream) const {
+  gpu_layer_view_->flushCache(cuda_stream);
 }
 
 template <typename BlockType>
-typename BlockLayer<BlockType>::GPULayerViewType
-BlockLayer<BlockType>::getGpuLayerViewAsync(
-    const CudaStream& cuda_stream) const {
-  if (!gpu_layer_view_) {
-    gpu_layer_view_ = std::make_unique<GPULayerViewType>();
-    gpu_layer_view_up_to_date_ = false;
-  }
-  if (!gpu_layer_view_up_to_date_) {
-    (*gpu_layer_view_)
-        .reset(const_cast<BlockLayer<BlockType>*>(this), cuda_stream);
-    gpu_layer_view_up_to_date_ = true;
-  }
+typename BlockLayer<BlockType>::GPULayerViewType&
+BlockLayer<BlockType>::getGpuLayerView(const CudaStream& cuda_stream) const {
+  updateGpuHash(cuda_stream);
+
+  // Sanity check that GPU and CPU caches have the same number of elements
+  CHECK_EQ(gpu_layer_view_->size(), blocks_.size());
   return *gpu_layer_view_;
 }
 

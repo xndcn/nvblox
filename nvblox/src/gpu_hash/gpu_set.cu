@@ -44,11 +44,11 @@ void copySetToVector(const Index3DDeviceSetType& set,
 
 void copySetToDeviceVectorAsync(const Index3DDeviceSetType& set,
                                 device_vector<Index3D>* vec,
-                                const CudaStream cuda_stream) {
+                                const CudaStream& cuda_stream) {
   vec->resizeAsync(set.size(), cuda_stream);
   auto set_iter = set.device_range();
-  thrust::copy_n(thrust::device, set_iter.begin(), set_iter.size(),
-                 vec->begin());
+  thrust::copy_n(thrust::device.on(cuda_stream), set_iter.begin(),
+                 set_iter.size(), vec->begin());
 }
 
 }  // namespace nvblox

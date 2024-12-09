@@ -35,24 +35,30 @@ DEFINE_double(dynamic_integrator_max_integration_distance_m,
               "Maximum distance (in meters) from the camera at which to "
               "integrate data into the dynamic occupancy grid.");
 
-Fuser::Fuser(std::unique_ptr<datasets::RgbdDataLoaderInterface>&& data_loader)
+Fuser::Fuser(std::unique_ptr<datasets::RgbdDataLoaderInterface>&& data_loader,
+             bool init_from_gflags)
     : data_loader_(std::move(data_loader)) {
+  if (init_from_gflags) {
+    initFromGflags();
+  }
+};
+
+void Fuser::initFromGflags() {
   // Get the params needed to create the multi_mapper
-  MultiMapper::Params multi_mapper_params;
-  get_multi_mapper_params_from_gflags(&voxel_size_m_, &mapping_type_,
-                                      &esdf_mode_, &multi_mapper_params);
+  get_global_params_from_gflags(&voxel_size_m_, &mapping_type_, &esdf_mode_);
 
   // Create the multi mapper
   // NOTE(remos): Mesh integration is not implemented for occupancy layers.
   multi_mapper_ = std::make_shared<MultiMapper>(
       voxel_size_m_, mapping_type_, esdf_mode_, MemoryType::kDevice);
-  multi_mapper_->setMultiMapperParams(multi_mapper_params);
 
   // Init fuser params
   set_fuser_params_from_gflags(this);
 
   // Init mapper params (for the two mapper held by the multi mapper)
   MapperParams mapper_params = get_mapper_params_from_gflags();
+  multi_mapper_->setMultiMapperParams(get_multi_mapper_params_from_gflags());
+
   // Set the same params for both mappers for now
   multi_mapper_->setMapperParams(mapper_params, mapper_params);
 
@@ -61,7 +67,7 @@ Fuser::Fuser(std::unique_ptr<datasets::RgbdDataLoaderInterface>&& data_loader)
   LOG(INFO) << "Setting dynamic occupancy max integration distance to "
             << FLAGS_dynamic_integrator_max_integration_distance_m << " m.";
   multi_mapper_.get()
-      ->masked_mapper()
+      ->foreground_mapper()
       ->occupancy_integrator()
       .max_integration_distance_m(
           FLAGS_dynamic_integrator_max_integration_distance_m);
@@ -72,12 +78,13 @@ Fuser::Fuser(std::unique_ptr<datasets::RgbdDataLoaderInterface>&& data_loader)
 };
 
 int Fuser::run() {
-  LOG(INFO) << "Trying to integrate the first frame: ";
-  if (!integrateFrames()) {
-    LOG(FATAL)
-        << "Failed to integrate first frame. Please check the file path.";
-    return 1;
+  // Just check that data loader we got is valid.
+  if (!data_loader_->setup_success()) {
+    LOG(FATAL) << "DataLoader was no set up sucessfully.";
   }
+
+  // Integrate all the data
+  integrateFrames();
 
   if (!occupancy_output_path_.empty()) {
     if (mapping_type_ == MappingType::kStaticOccupancy) {
@@ -144,33 +151,29 @@ int Fuser::run() {
   return 0;
 }
 
-bool Fuser::integrateFrames() {
+void Fuser::integrateFrames() {
   int frame_number = 0;
   while (frame_number < num_frames_to_integrate_ &&
-         integrateFrame(frame_number++)) {
+         integrateFrame(frame_number++) !=
+             datasets::DataLoadResult::kNoMoreData) {
     timing::mark("Frame " + std::to_string(frame_number - 1), Color::Red());
     LOG(INFO) << "Integrating frame " << frame_number - 1;
   }
   LOG(INFO) << "Ran out of data at frame: " << frame_number - 1;
-  return true;
 }
 
-bool Fuser::integrateFrame(const int frame_number) {
+datasets::DataLoadResult Fuser::integrateFrame(const int frame_number) {
   timing::Rates::tick("fuser/integrate_frame");
   timing::Timer timer_file("fuser/file_loading");
-  DepthImage depth_frame(MemoryType::kDevice);
-  ColorImage color_frame(MemoryType::kDevice);
-  Transform T_L_C;
-  Camera camera;
-  const datasets::DataLoadResult load_result =
-      data_loader_->loadNext(&depth_frame, &T_L_C, &camera, &color_frame);
+  const datasets::DataLoadResult load_result = data_loader_->loadNext(
+      depth_frame_.get(), T_L_D_.get(), depth_camera_.get(), color_frame_.get(),
+      T_L_C_.get(), color_camera_.get());
   timer_file.Stop();
 
-  if (load_result == datasets::DataLoadResult::kBadFrame) {
-    return true;  // Bad data but keep going
-  }
-  if (load_result == datasets::DataLoadResult::kNoMoreData) {
-    return false;  // Shows over folks
+  // We couldn't load this data frame.
+  if ((load_result == datasets::DataLoadResult::kBadFrame) ||
+      (load_result == datasets::DataLoadResult::kNoMoreData)) {
+    return load_result;
   }
 
   // Depth integration
@@ -181,7 +184,7 @@ bool Fuser::integrateFrame(const int frame_number) {
 
     // Do the actual depth integration
     nvblox::Time time(frame_number * frame_period_ms_);
-    multi_mapper_->integrateDepth(depth_frame, T_L_C, camera, time);
+    multi_mapper_->integrateDepth(*depth_frame_, *T_L_D_, *depth_camera_, time);
     timer_integrate.Stop();
 
     // Store the dynamic mask if required
@@ -194,7 +197,7 @@ bool Fuser::integrateFrame(const int frame_number) {
   if ((frame_number + 1) % color_frame_subsampling_ == 0) {
     timing::Timer timer_integrate_color("fuser/integrate_color");
     timing::Rates::tick("fuser/integrate_color");
-    multi_mapper_->integrateColor(color_frame, T_L_C, camera);
+    multi_mapper_->integrateColor(*color_frame_, *T_L_C_, *color_camera_);
     timer_integrate_color.Stop();
   }
 
@@ -219,11 +222,17 @@ bool Fuser::integrateFrame(const int frame_number) {
 
   per_frame_timer.Stop();
 
-  return true;
+  return load_result;
 }
 
-Mapper& Fuser::static_mapper() {
-  return *multi_mapper_.get()->unmasked_mapper();
+std::shared_ptr<Mapper> Fuser::static_mapper() {
+  return multi_mapper_.get()->background_mapper();
+}
+
+std::shared_ptr<MultiMapper> Fuser::multi_mapper() { return multi_mapper_; }
+
+void Fuser::setMultiMapper(const std::shared_ptr<MultiMapper>& multi_mapper) {
+  multi_mapper_ = multi_mapper;
 }
 
 bool Fuser::outputDynamicOverlayImage(int frame_number) {
@@ -236,27 +245,27 @@ bool Fuser::outputDynamicOverlayImage(int frame_number) {
 
 bool Fuser::outputTsdfPointcloudPly() {
   timing::Timer timer_write("fuser/tsdf/write");
-  return static_mapper().saveTsdfAsPly(tsdf_output_path_);
+  return static_mapper()->saveTsdfAsPly(tsdf_output_path_);
 }
 
 bool Fuser::outputOccupancyPointcloudPly() {
   timing::Timer timer_write("fuser/occupancy/write");
-  return static_mapper().saveOccupancyAsPly(occupancy_output_path_);
+  return static_mapper()->saveOccupancyAsPly(occupancy_output_path_);
 }
 
 bool Fuser::outputFreespacePointcloudPly() {
   timing::Timer timer_write("fuser/freespace/write");
-  return static_mapper().saveFreespaceAsPly(freespace_output_path_);
+  return static_mapper()->saveFreespaceAsPly(freespace_output_path_);
 }
 
 bool Fuser::outputESDFPointcloudPly() {
   timing::Timer timer_write("fuser/esdf/write");
-  return static_mapper().saveEsdfAsPly(esdf_output_path_);
+  return static_mapper()->saveEsdfAsPly(esdf_output_path_);
 }
 
 bool Fuser::outputMeshPly() {
   timing::Timer timer_write("fuser/mesh/write");
-  return static_mapper().saveMeshAsPly(mesh_output_path_);
+  return static_mapper()->saveMeshAsPly(mesh_output_path_);
 }
 
 bool Fuser::outputTimingsToFile() {
@@ -269,7 +278,37 @@ bool Fuser::outputTimingsToFile() {
 
 bool Fuser::outputMapToFile() {
   timing::Timer timer_serialize("fuser/map/write");
-  return static_mapper().saveLayerCake(map_output_path_);
+  return static_mapper()->saveLayerCake(map_output_path_);
+}
+
+std::shared_ptr<const ColorImage> Fuser::getColorFrame() const {
+  return color_frame_;
+}
+
+std::shared_ptr<const DepthImage> Fuser::getDepthFrame() const {
+  return depth_frame_;
+}
+
+std::shared_ptr<const Camera> Fuser::getDepthCamera() const {
+  return depth_camera_;
+}
+
+std::shared_ptr<const Transform> Fuser::getDepthCameraPose() const {
+  return T_L_D_;
+}
+
+std::shared_ptr<const Camera> Fuser::getColorCamera() const {
+  return color_camera_;
+}
+
+std::shared_ptr<const Transform> Fuser::getColorCameraPose() const {
+  return T_L_C_;
+}
+
+std::shared_ptr<const SerializedMeshLayer> Fuser::getSerializedMesh() const {
+  multi_mapper_->background_mapper()->serializeSelectedLayers(
+      LayerType::kMesh, kLayerStreamerUnlimitedBandwidth);
+  return multi_mapper_->background_mapper()->serializedMeshLayer();
 }
 
 }  //  namespace nvblox

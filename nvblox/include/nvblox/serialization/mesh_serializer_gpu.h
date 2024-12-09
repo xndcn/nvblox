@@ -28,10 +28,10 @@ limitations under the License.
 namespace nvblox {
 
 /// Container for storing a serialized mesh
-struct SerializedMesh {
+struct SerializedMeshLayer {
   /// Serialized mesh components
-  host_vector<nvblox::Vector3f> vertices;
-  host_vector<nvblox::Color> colors;
+  host_vector<Vector3f> vertices;
+  host_vector<Color> colors;
   host_vector<int> triangle_indices;
 
   /// Offsets for each mesh block in the output vector.
@@ -96,6 +96,7 @@ class MeshSerializerGpu {
  public:
   MeshSerializerGpu();
   virtual ~MeshSerializerGpu() = default;
+  using SerializedLayerType = SerializedMeshLayer;
 
   /// Serialize a mesh layer
   ///
@@ -108,13 +109,13 @@ class MeshSerializerGpu {
   /// @param mesh_layer                  Mesh layer to serialize
   /// @param block_indices_to_serialize  Requested block indices
   /// @param cuda_stream                 Cuda stream
-  std::shared_ptr<const SerializedMesh> serializeMesh(
-      const nvblox::MeshLayer& mesh_layer,
-      const std::vector<nvblox::Index3D>& block_indices_to_serialize,
-      const nvblox::CudaStream cuda_stream);
+  std::shared_ptr<const SerializedMeshLayer> serialize(
+      const MeshLayer& mesh_layer,
+      const std::vector<Index3D>& block_indices_to_serialize,
+      const CudaStream& cuda_stream);
 
   /// Get the serialized mesh
-  std::shared_ptr<const SerializedMesh> getSerializedMesh() const {
+  std::shared_ptr<const SerializedMeshLayer> getSerializedLayer() const {
     return serialized_mesh_;
   }
 
@@ -123,7 +124,7 @@ class MeshSerializerGpu {
   LayerSerializerGpuInternal<MeshLayer, Color> color_serializer_;
   LayerSerializerGpuInternal<MeshLayer, int> triangle_index_serializer_;
 
-  std::shared_ptr<SerializedMesh> serialized_mesh_;
+  std::shared_ptr<SerializedMeshLayer> serialized_mesh_;
 };
 
 }  // namespace nvblox

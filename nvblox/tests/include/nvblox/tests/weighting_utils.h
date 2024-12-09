@@ -11,7 +11,7 @@ float computeWeight(unified_ptr<WeightingFunction>& weighting_function,
                     float voxel_distance_from_camera,
                     float truncation_distance);
 
-unified_ptr<WeightingFunction> createWeightingFunction(
+inline unified_ptr<WeightingFunction> createWeightingFunction(
     WeightingFunctionType type) {
   return make_unified<WeightingFunction>(type);
 }

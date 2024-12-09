@@ -83,7 +83,7 @@ TEST_F(DynamicsTester, PrimitiveScene) {
                                     &depth_frame_C);
 
   // Check that there are no dynamics detected
-  DynamicsDetection detector;
+  DynamicsDetection detector(std::make_shared<CudaStreamOwning>());
   detector.computeDynamics(depth_frame_C, freespace_layer_L, camera_, T_L_C);
   auto dynamic_points = detector.getDynamicPointsHost();
   EXPECT_EQ(dynamic_points.cols(), 0);
@@ -193,16 +193,16 @@ TEST_F(DynamicsTester, HumanDataset) {
   const Time start_time_ms{100};
   // Initialize layer
   freespace_integrator.updateFreespaceLayer(tsdf_layer_L.getAllBlockIndices(),
-                                            start_time_ms, tsdf_layer_L,
+                                            start_time_ms, tsdf_layer_L, {},
                                             &freespace_layer_L);
   // Update to generate high confidence freespace in free areas
   freespace_integrator.updateFreespaceLayer(
       tsdf_layer_L.getAllBlockIndices(),
-      start_time_ms + duration_to_change_to_freespace_ms, tsdf_layer_L,
+      start_time_ms + duration_to_change_to_freespace_ms, tsdf_layer_L, {},
       &freespace_layer_L);
 
   // Compute the dynamics on the second depth frame (relative to the tsdf)
-  DynamicsDetection detector;
+  DynamicsDetection detector(std::make_shared<CudaStreamOwning>());
   detector.computeDynamics(depth_frame_C, freespace_layer_L, camera,
                            Transform::Identity());
   auto dynamic_points = detector.getDynamicPointsHost();

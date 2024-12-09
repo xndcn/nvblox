@@ -17,10 +17,21 @@ limitations under the License.
 
 #include "nvblox/utils/logging.h"
 
+#include <filesystem>
 #include <fstream>
 
 namespace nvblox {
 namespace io {
+
+std::string getIndexedPath(const std::string& dir, const std::string& prefix,
+                           const int idx, const int num_digits,
+                           const std::string& ext) {
+  // Build the path
+  std::ostringstream oss;
+  oss << prefix << std::setw(num_digits) << std::setfill('0') << idx << ext;
+  const std::string filename = oss.str();
+  return std::filesystem::path(dir) / filename;
+}
 
 template <typename Derived>
 void writeToCsv(const std::string& filepath,

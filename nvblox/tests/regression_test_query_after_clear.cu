@@ -96,7 +96,8 @@ TEST(QueryAfterClear, SingleBlock) {
   constexpr int kVoxelsPerSide = VoxelBlock<EsdfVoxel>::kVoxelsPerSide;
   const dim3 kThreadsPerBlock(kVoxelsPerSide, kVoxelsPerSide, kVoxelsPerSide);
   copyBlockAtOrigin<<<kNumBlocks, kThreadsPerBlock>>>(
-      esdf_layer.getGpuLayerView().getHash().impl_, output_block_ptr.get());
+      esdf_layer.getGpuLayerView(CudaStreamOwning()).getHash().impl_,
+      output_block_ptr.get());
   cudaDeviceSynchronize();
   cudaPeekAtLastError();
 
@@ -112,7 +113,8 @@ TEST(QueryAfterClear, SingleBlock) {
 
   // Try to copy again, should be a no-op.
   copyBlockAtOrigin<<<kNumBlocks, kThreadsPerBlock>>>(
-      esdf_layer.getGpuLayerView().getHash().impl_, output_block_ptr.get());
+      esdf_layer.getGpuLayerView(CudaStreamOwning()).getHash().impl_,
+      output_block_ptr.get());
   cudaDeviceSynchronize();
   cudaPeekAtLastError();
 

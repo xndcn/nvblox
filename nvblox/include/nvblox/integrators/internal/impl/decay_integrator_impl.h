@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,17 +15,6 @@ limitations under the License.
 */
 
 namespace nvblox {
-
-template <typename LayerType>
-DecayIntegratorBase<LayerType>::DecayIntegratorBase(DecayMode decay_mode) {
-  if (decay_mode == DecayMode::kDecayToDeallocate) {
-    deallocate_decayed_blocks(true);
-  } else if (decay_mode == DecayMode::kDecayToFree) {
-    deallocate_decayed_blocks(false);
-  } else {
-    LOG(FATAL) << "Decay mode not implemented";
-  }
-}
 
 template <typename LayerType>
 bool DecayIntegratorBase<LayerType>::deallocate_decayed_blocks() const {

@@ -26,18 +26,25 @@ struct UpdateOccupancyVoxelFunctor {
   UpdateOccupancyVoxelFunctor() {}
 
   __device__ bool operator()(const float surface_depth_measured,
-                             const float voxel_depth_m,
+                             const float voxel_depth_m, const bool is_masked,
                              OccupancyVoxel* voxel_ptr) {
+    if (surface_depth_measured <= 0.F) {
+      return false;
+    }
+
     // Get the update summand depending on the measured depth
     float log_odds_update;
-    if (voxel_depth_m <
-        surface_depth_measured - occupied_region_half_width_m_) {
-      log_odds_update = free_region_log_odds_;
-    } else if (voxel_depth_m <=
-               surface_depth_measured + occupied_region_half_width_m_) {
+
+    // Unobserved if the voxel is behind the object or if depth pixel is
+    // unmasked
+    if (!is_masked || voxel_depth_m > surface_depth_measured +
+                                          occupied_region_half_width_m_) {
+      log_odds_update = unobserved_region_log_odds_;
+    } else if (voxel_depth_m >
+               surface_depth_measured - occupied_region_half_width_m_) {
       log_odds_update = occupied_region_log_odds_;
     } else {
-      log_odds_update = unobserved_region_log_odds_;
+      log_odds_update = free_region_log_odds_;
     }
 
     // Update and clip
@@ -81,8 +88,9 @@ ProjectiveOccupancyIntegrator::~ProjectiveOccupancyIntegrator() {
 }
 
 void ProjectiveOccupancyIntegrator::integrateFrame(
-    const DepthImage& depth_frame, const Transform& T_L_C, const Camera& camera,
-    OccupancyLayer* layer, std::vector<Index3D>* updated_blocks) {
+    const MaskedDepthImageConstView& depth_frame, const Transform& T_L_C,
+    const Camera& camera, OccupancyLayer* layer,
+    std::vector<Index3D>* updated_blocks) {
   setFunctorParameters(layer->voxel_size());
   ProjectiveIntegrator<OccupancyVoxel>::integrateFrame(
       depth_frame, T_L_C, camera,
@@ -92,8 +100,9 @@ void ProjectiveOccupancyIntegrator::integrateFrame(
 }
 
 void ProjectiveOccupancyIntegrator::integrateFrame(
-    const DepthImage& depth_frame, const Transform& T_L_C, const Lidar& lidar,
-    OccupancyLayer* layer, std::vector<Index3D>* updated_blocks) {
+    const MaskedDepthImageConstView& depth_frame, const Transform& T_L_C,
+    const Lidar& lidar, OccupancyLayer* layer,
+    std::vector<Index3D>* updated_blocks) {
   setFunctorParameters(layer->voxel_size());
   ProjectiveIntegrator<OccupancyVoxel>::integrateFrame(
       depth_frame, T_L_C, lidar,

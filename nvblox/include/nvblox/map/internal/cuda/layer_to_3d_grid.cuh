@@ -35,7 +35,7 @@ void voxelLayerToDenseVoxelGridInAABBAsync(
     const AxisAlignedBoundingBox& aabb,       // NOLINT
     const VoxelType default_value,            // NOLINT
     Unified3DGrid<VoxelType>* grid,           // NOLINT
-    CudaStream cuda_stream);
+    const CudaStream& cuda_stream);
 
 /// Copies a VoxelLayer into a dense Unified3DGrid with conversion
 /// @tparam InputVoxelType The type of the voxel in the voxel layer.
@@ -55,7 +55,7 @@ void voxelLayerToDenseVoxelGridInAABBAsync(
     const VoxelBlockLayer<InputVoxelType>& layer,
     const AxisAlignedBoundingBox& aabb, const OutputCellType default_value,
     const ConversionFunctor& conversion_op, Unified3DGrid<OutputCellType>* grid,
-    CudaStream cuda_stream);
+    const CudaStream& cuda_stream);
 
 }  // namespace nvblox
 

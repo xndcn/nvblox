@@ -22,7 +22,7 @@ std::shared_ptr<const SerializedLayer<typename LayerType::BlockType::VoxelType>>
 LayerSerializerGpu<LayerType>::serialize(
     const LayerType& layer,
     const std::vector<Index3D>& block_indices_to_serialize,
-    const CudaStream cuda_stream) {
+    const CudaStream& cuda_stream) {
   serializer_.serializeAsync(
       layer, block_indices_to_serialize, serialized_layer_->voxels,
       serialized_layer_->block_offsets,

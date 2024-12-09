@@ -21,7 +21,7 @@ limitations under the License.
 #include "nvblox/datasets/3dmatch.h"
 #include "nvblox/executables/fuser.h"
 #include "nvblox/io/image_io.h"
-#include "nvblox/sensors/connected_components.h"
+#include "nvblox/sensors/mask_preprocessor.h"
 #include "nvblox/sensors/npp_image_operations.h"
 #include "nvblox/serialization/mesh_serializer_gpu.h"
 #include "nvblox/tests/utils.h"
@@ -165,9 +165,9 @@ void benchmarkSerializeMesh(benchmark::State& state) {
     mapper->updateMesh();
     state.ResumeTiming();
 
-    serializer.serializeMesh(mapper->mesh_layer(),
-                             mapper->mesh_layer().getAllBlockIndices(),
-                             cuda_stream);
+    serializer.serialize(mapper->mesh_layer(),
+                         mapper->mesh_layer().getAllBlockIndices(),
+                         cuda_stream);
   }
 }
 
@@ -180,9 +180,11 @@ void benchmarkRemoveSmallConnectedComponents(benchmark::State& state) {
   createMaskImage(&mask,
                   static_cast<test_utils::MaskImageType>(state.range(0)));
   MonoImage mask_out(mask.rows(), mask.cols(), MemoryType::kDevice);
+  image::MaskPreprocessor mask_preprocessor(
+      std::make_shared<CudaStreamOwning>());
+
   for (auto _ : state) {
-    image::removeSmallConnectedComponents(mask, 10000, &mask_out,
-                                          CudaStreamOwning());
+    mask_preprocessor.removeSmallConnectedComponents(mask, 10000, &mask_out);
   }
 }
 BENCHMARK(benchmarkRemoveSmallConnectedComponents)
@@ -199,8 +201,8 @@ void benchmarkMonoImageGpuToCpuRoundtrip(benchmark::State& state) {
 
   MonoImage image_host(height, width, MemoryType::kHost);
   MonoImage image_device(height, width, MemoryType::kDevice);
-  image_host.setZero();
-  image_device.setZero();
+  image_host.setZeroAsync(CudaStreamOwning());
+  image_device.setZeroAsync(CudaStreamOwning());
 
   for (auto _ : state) {
     image_host.copyFrom(image_device);

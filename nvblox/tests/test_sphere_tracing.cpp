@@ -633,9 +633,10 @@ TEST_F(SphereTracingTest, CastingFromPositiveAndNegative) {
       std::move(casting_results.second);
 
   // Bring the results back to the CPU
-  std::vector<bool> success_flags = success_flags_device.toVector();
+  std::vector<bool> success_flags =
+      success_flags_device.toVectorAsync(CudaStreamOwning());
   std::vector<Vector3f> intersections_points_L =
-      intersections_points_L_device.toVector();
+      intersections_points_L_device.toVectorAsync(CudaStreamOwning());
 
   // Check the percentage of successful ray casts
   const int num_hits = std::accumulate(

@@ -313,7 +313,7 @@ struct Cloner {
   typedef typename std::remove_cv<T>::type T_nonconst;
   static unified_ptr<T_nonconst> cloneAsync(const unified_ptr<T>& original,
                                             MemoryType memory_type, size_t,
-                                            const CudaStream cuda_stream) {
+                                            const CudaStream& cuda_stream) {
     CHECK(original.get() != nullptr);
     CHECK(!(memory_type == MemoryType::kUnified &&
             original.memory_type() == MemoryType::kUnified))
@@ -334,8 +334,13 @@ struct Cloner<T[]> {
   static unified_ptr<T_nonconst[]> cloneAsync(const unified_ptr<T[]>& original,
                                               MemoryType memory_type,
                                               size_t size,
-                                              const CudaStream cuda_stream) {
+                                              const CudaStream& cuda_stream) {
     CHECK(original.get() != nullptr);
+    CHECK(!(memory_type == MemoryType::kUnified &&
+            original.memory_type() == MemoryType::kUnified))
+        << "Cloning between two unified memory areas is not allowed since "
+           "it's not supported on all devices (need "
+           "concurrentManagedAccess=1)";
     auto other =
         make_unified_async<T_nonconst[]>(size, memory_type, cuda_stream);
     checkCudaErrors(cudaMemcpyAsync(other.get(), original.get(),
@@ -358,19 +363,19 @@ unified_ptr<typename std::remove_cv<T>::type> unified_ptr<T>::clone(
 
 template <typename T>
 unified_ptr<typename std::remove_cv<T>::type> unified_ptr<T>::cloneAsync(
-    const CudaStream cuda_stream) const {
+    const CudaStream& cuda_stream) const {
   return Cloner<T>::cloneAsync(*this, memory_type_, size_, cuda_stream);
 }
 
 template <typename T>
 unified_ptr<typename std::remove_cv<T>::type> unified_ptr<T>::cloneAsync(
-    MemoryType memory_type, const CudaStream cuda_stream) const {
+    MemoryType memory_type, const CudaStream& cuda_stream) const {
   return Cloner<T>::cloneAsync(*this, memory_type, size_, cuda_stream);
 }
 
 template <typename T>
 void unified_ptr<T>::copyToAsync(T_noextent* raw_ptr,
-                                 const CudaStream cuda_stream) const {
+                                 const CudaStream& cuda_stream) const {
   CHECK(raw_ptr != nullptr);
   checkCudaErrors(cudaMemcpyAsync(raw_ptr, this->get(),
                                   sizeof(T_noextent) * size_, cudaMemcpyDefault,
@@ -384,7 +389,7 @@ void unified_ptr<T>::copyTo(T_noextent* raw_ptr) const {
 
 template <typename T>
 void unified_ptr<T>::copyToAsync(unified_ptr<T_nonconst>& ptr,
-                                 const CudaStream cuda_stream) const {
+                                 const CudaStream& cuda_stream) const {
   CHECK(ptr.size_ >= size_);
   copyToAsync(ptr.get(), cuda_stream);
 }
@@ -396,7 +401,7 @@ void unified_ptr<T>::copyTo(unified_ptr<T_nonconst>& ptr) const {
 template <typename T>
 void unified_ptr<T>::copyFromAsync(const T_noextent* const raw_ptr,
                                    const size_t num_elements,
-                                   const CudaStream cuda_stream) {
+                                   const CudaStream& cuda_stream) {
   CHECK(num_elements <= size_);
   checkCudaErrors(cudaMemcpyAsync(this->get(), raw_ptr,
                                   sizeof(T_noextent) * num_elements,
@@ -411,13 +416,13 @@ void unified_ptr<T>::copyFrom(const T_noextent* const raw_ptr,
 
 template <typename T>
 void unified_ptr<T>::copyFromAsync(unified_ptr<T_nonconst>& ptr,
-                                   const CudaStream cuda_stream) {
+                                   const CudaStream& cuda_stream) {
   copyFromAsync(ptr.get(), ptr.size_, cuda_stream);
 }
 
 template <typename T>
 void unified_ptr<T>::copyFromAsync(unified_ptr<const T_nonconst>& ptr,
-                                   const CudaStream cuda_stream) {
+                                   const CudaStream& cuda_stream) {
   copyFromAsync(ptr.get(), ptr.size_, cuda_stream);
 }
 
@@ -432,7 +437,7 @@ void unified_ptr<T>::setZero() {
 }
 
 template <typename T>
-void unified_ptr<T>::setZeroAsync(const CudaStream cuda_stream) {
+void unified_ptr<T>::setZeroAsync(const CudaStream& cuda_stream) {
   CHECK(ptr_ != nullptr);
   checkCudaErrors(
       cudaMemsetAsync(ptr_, 0, sizeof(T_noextent) * size_, cuda_stream));

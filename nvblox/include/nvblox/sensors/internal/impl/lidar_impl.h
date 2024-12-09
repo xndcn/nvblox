@@ -18,6 +18,8 @@ limitations under the License.
 
 #include "math.h"
 
+#include "nvblox/core/internal/error_check.h"
+#include "nvblox/geometry/transforms.h"
 #include "nvblox/utils/logging.h"
 
 namespace nvblox {
@@ -38,19 +40,19 @@ Lidar::Lidar(int num_azimuth_divisions, int num_elevation_divisions,
       min_valid_range_m_(min_valid_range_m),
       max_valid_range_m_(max_valid_range_m) {
   // Only positive range values are allowed
-  CHECK_GE(min_valid_range_m_, 0.f);
-  CHECK_LT(min_valid_range_m_, max_valid_range_m_);
+  NVBLOX_CHECK(min_valid_range_m_ >= 0.f, "");
+  NVBLOX_CHECK(min_valid_range_m_ < max_valid_range_m_, "");
 
   // Only even numbers of azimuth divisions allowed
-  CHECK(num_azimuth_divisions_ % 2 == 0);
+  NVBLOX_CHECK(num_azimuth_divisions_ % 2 == 0, "");
 
   // Max sure the min elevation angle is negative (this also makes us tolerant
   // to positive and negative inputs).
   if (min_angle_below_zero_elevation_rad > 0) {
     min_angle_below_zero_elevation_rad = -min_angle_below_zero_elevation_rad;
   }
-  CHECK_GT(max_angle_above_zero_elevation_rad, 0.f);
-  CHECK_LT(min_angle_below_zero_elevation_rad, 0.f);
+  NVBLOX_CHECK(max_angle_above_zero_elevation_rad > 0.f, "");
+  NVBLOX_CHECK(min_angle_below_zero_elevation_rad < 0.f, "");
 
   // Calculate the vertical FOV
   vertical_fov_rad_ =
@@ -239,6 +241,19 @@ std::ostream& operator<<(std::ostream& os, const Lidar& lidar) {
      << "\tstart_polar_angle_deg: "
      << lidar.start_polar_angle_rad() * kRadToDegrees;
   return os;
+}
+
+bool areLidarsEqual(const Lidar& lidar_1, const Lidar& lidar_2,
+                    const Transform& T_L_C1, const Transform& T_L_C2) {
+  // Check that the cameras have the same extrinsics
+  constexpr float kTranslationToleranceM = 0.001f;
+  constexpr float kAngularToleranceDeg = 0.1f;
+  const bool same_extrinsics = arePosesClose(
+      T_L_C1, T_L_C2, kTranslationToleranceM, kAngularToleranceDeg);
+
+  // Check that the cameras have the same intrinsics
+  const bool same_intrinsics = (lidar_1 == lidar_2);
+  return same_extrinsics && same_intrinsics;
 }
 
 }  // namespace nvblox

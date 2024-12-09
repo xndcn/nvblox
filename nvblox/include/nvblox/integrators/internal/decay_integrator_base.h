@@ -1,5 +1,5 @@
 /*
-Copyright 2022 NVIDIA CORPORATION
+Copyright 2022-2024 NVIDIA CORPORATION
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -22,14 +22,11 @@ limitations under the License.
 #include "nvblox/core/parameter_tree.h"
 #include "nvblox/core/types.h"
 #include "nvblox/integrators/internal/decay_integrator_base_params.h"
+#include "nvblox/integrators/viewpoint.h"
 #include "nvblox/sensors/camera.h"
 #include "nvblox/sensors/image.h"
 
 namespace nvblox {
-
-/// The mode of the decay integrator. Do we decay to deallocated or free.
-enum class DecayMode { kDecayToDeallocate, kDecayToFree };
-constexpr DecayMode kDefaultDecayMode = DecayMode::kDecayToDeallocate;
 
 /// An options struct for specifying blocks excluded from decay.
 struct DecayBlockExclusionOptions {
@@ -43,38 +40,12 @@ struct DecayBlockExclusionOptions {
   std::optional<float> exclusion_radius_m = std::nullopt;
 };
 
-/// An options struct for specifying view-based decay exclusion. Voxels which
-/// have a valid depth measurement in the passed depth image, will not be
-/// decayed.
-struct DecayViewExclusionOptions {
-  DecayViewExclusionOptions() = delete;
-  explicit DecayViewExclusionOptions(
-      const DepthImage* _depth_image, Transform _T_L_C, Camera _camera,
-      std::optional<float> _max_view_distance_m = std::nullopt,
-      std::optional<float> _truncation_distance_m = std::nullopt);
-  ~DecayViewExclusionOptions() = default;
-
-  /// The depth image tested for valid depth during view-based decay-exclusion.
-  const DepthImage* depth_image;
-  /// The pose of the camera for view-based decay-exclusion.
-  Transform T_L_C;
-  /// The intrinsics of the camera for view-based decay-exclusion.
-  Camera camera;
-  /// The maximum depth at which a voxel is considered in view. If these are not
-  /// provided the max distance is infinite.
-  std::optional<float> max_view_distance_m;
-  /// truncation_distance_m behind the depth measurment is considered occluded
-  /// and will be decayed. If this is not provided, we do not do occlusion
-  /// testing.
-  std::optional<float> truncation_distance_m;
-};
-
 /// A base class for the various decay integrators. It is specialized for
 /// different voxel/layer types.
 template <typename LayerType>
 class DecayIntegratorBase {
  public:
-  explicit DecayIntegratorBase(DecayMode decay_mode = kDefaultDecayMode);
+  DecayIntegratorBase() = default;
   virtual ~DecayIntegratorBase() = default;
 
   DecayIntegratorBase(const DecayIntegratorBase&) = delete;
@@ -89,7 +60,7 @@ class DecayIntegratorBase {
   /// @param cuda_stream  Cuda stream for GPU work
   /// @return A vector containing the indices of the blocks deallocated.
   virtual std::vector<Index3D> decay(LayerType* layer_ptr,
-                                     const CudaStream cuda_stream) = 0;
+                                     const CudaStream& cuda_stream) = 0;
   /// Decay blocks. Blocks to decay can be excluded based on block index and/or
   /// distance to point.
   ///
@@ -100,7 +71,7 @@ class DecayIntegratorBase {
   virtual std::vector<Index3D> decay(
       LayerType* layer_ptr,
       const DecayBlockExclusionOptions& block_exclusion_options,
-      const CudaStream cuda_stream) = 0;
+      const CudaStream& cuda_stream) = 0;
 
   /// Decay blocks. Voxels can be excluded based on being in view.
   /// @param layer_ptr              Layer to decay
@@ -109,8 +80,8 @@ class DecayIntegratorBase {
   /// @return A vector containing the indices of the blocks deallocated.
   virtual std::vector<Index3D> decay(
       LayerType* layer_ptr,
-      const DecayViewExclusionOptions& view_exclusion_options,
-      const CudaStream cuda_stream) = 0;
+      const ViewBasedInclusionData& view_exclusion_options,
+      const CudaStream& cuda_stream) = 0;
 
   /// Decay blocks. Optional block and voxel view exclusion.
   /// @param layer_ptr               Layer to decay
@@ -121,8 +92,8 @@ class DecayIntegratorBase {
   virtual std::vector<Index3D> decay(
       LayerType* layer_ptr,
       const std::optional<DecayBlockExclusionOptions>& block_exclusion_options,
-      const std::optional<DecayViewExclusionOptions>& view_exclusion_options,
-      const CudaStream cuda_stream) = 0;
+      const std::optional<ViewBasedInclusionData>& view_exclusion_options,
+      const CudaStream& cuda_stream) = 0;
 
   /// A parameter getter
   /// The flag that controls if fully decayed block should be deallocated or
@@ -143,7 +114,7 @@ class DecayIntegratorBase {
  protected:
   // Parameter for the decay step
   bool deallocate_decayed_blocks_{
-      kDecayIntegratorBaseDeallocateDecayedBlocks.default_value};
+      kDecayIntegratorDeallocateDecayedBlocks.default_value};
 };
 
 }  // namespace nvblox

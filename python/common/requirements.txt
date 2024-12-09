@@ -1,4 +1,4 @@
-matplotlib
-numpy
+numpy==1.24 # Fixed version of numpy for compatibility with other modules.
 open3d
 plyfile
+matplotlib

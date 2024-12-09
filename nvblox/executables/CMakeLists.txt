@@ -1,43 +1,41 @@
 # Datasets library
-add_library(nvblox_datasets SHARED
+add_nvblox_shared_library(nvblox_datasets
+  SOURCE_FILES
     src/datasets/3dmatch.cpp
     src/datasets/image_loader.cpp
     src/datasets/replica.cpp
     src/datasets/redwood.cpp
     src/fuser.cpp
-)
-target_include_directories(nvblox_datasets PUBLIC 
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  LINK_LIBRARIES_PUBLIC
+    nvblox_lib
+  INCLUDE_DIRECTORIES_PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}/include>
     $<INSTALL_INTERFACE:include>
+
 )
-
-target_link_libraries(nvblox_datasets nvblox_lib)
-set_target_properties(nvblox_datasets PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
-
 
 # 3Dmatch executable
-add_executable(fuse_3dmatch
+add_nvblox_executable(fuse_3dmatch
+  SOURCE_FILES
     src/fuse_3dmatch.cpp
+  LINK_LIBRARIES_PUBLIC
+    nvblox_datasets
 )
-target_link_libraries(fuse_3dmatch
-    nvblox_lib nvblox_datasets
-)
-set_target_properties(fuse_3dmatch PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
 
 # Replica executable
-add_executable(fuse_replica
+add_nvblox_executable(fuse_replica
+  SOURCE_FILES
     src/fuse_replica.cpp
+  LINK_LIBRARIES_PUBLIC
+    nvblox_lib
+    nvblox_datasets
 )
-target_link_libraries(fuse_replica
-    nvblox_lib nvblox_datasets
-)
-set_target_properties(fuse_replica PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
 
 # Redwood executable
-add_executable(fuse_redwood
+add_nvblox_executable(fuse_redwood
+  SOURCE_FILES
     src/fuse_redwood.cpp
+  LINK_LIBRARIES_PUBLIC
+    nvblox_lib
+    nvblox_datasets
 )
-target_link_libraries(fuse_redwood
-    nvblox_lib nvblox_datasets
-)
-set_target_properties(fuse_redwood PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)

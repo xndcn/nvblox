@@ -82,8 +82,8 @@ class Scene {
   /// Generates a synthetic view given camera parameters and a transformation
   /// of the camera to the scene.
   void generateDepthImageFromScene(const Camera& camera, const Transform& T_S_C,
-                                   float max_dist,
-                                   DepthImage* depth_frame) const;
+                                   float max_dist, DepthImage* depth_frame,
+                                   const float invalid_depth = 0.f) const;
 
   /// Computes the ground truth SDFs (either TSDF or ESDF depending on template
   /// parameter).
@@ -103,6 +103,9 @@ class Scene {
 
   const AxisAlignedBoundingBox& aabb() const { return aabb_; }
   AxisAlignedBoundingBox& aabb() { return aabb_; }
+
+  /// Returns a list of the primitive types contained in the scene
+  std::vector<Primitive::Type> getPrimitiveTypeList() const;
 
  protected:
   template <typename VoxelType>

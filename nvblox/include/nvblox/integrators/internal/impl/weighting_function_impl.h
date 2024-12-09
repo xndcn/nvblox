@@ -49,7 +49,7 @@ float WeightingFunction::operator()(float measured_depth, float voxel_depth,
     case WeightingFunctionType::kLinearWithMax:
       return computeLinearWithMax(voxel_depth);
     default:
-      LOG(FATAL) << "Requested weighting function type not implemented";
+      NVBLOX_ABORT("Requested weighting function type not implemented");
       return 0.0;
   };
 }

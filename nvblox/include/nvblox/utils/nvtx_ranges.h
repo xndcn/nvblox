@@ -17,7 +17,7 @@ limitations under the License.
 
 #include <string>
 
-#include <nvToolsExt.h>
+#include <nvtx3/nvToolsExt.h>
 
 #include "nvblox/core/color.h"
 

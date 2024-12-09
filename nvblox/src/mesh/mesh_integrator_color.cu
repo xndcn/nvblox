@@ -236,14 +236,14 @@ void MeshIntegrator::colorMeshGPU(
   // allocate space for color.
   std::vector<Index3D> block_indices;
   block_indices.reserve(requested_block_indices.size());
-  std::for_each(
-      requested_block_indices.begin(), requested_block_indices.end(),
-      [&mesh_layer, &block_indices](const Index3D& block_idx) {
-        if (mesh_layer->isBlockAllocated(block_idx)) {
-          mesh_layer->getBlockAtIndex(block_idx)->expandColorsToMatchVertices();
-          block_indices.push_back(block_idx);
-        }
-      });
+  std::for_each(requested_block_indices.begin(), requested_block_indices.end(),
+                [&mesh_layer, &block_indices, this](const Index3D& block_idx) {
+                  if (mesh_layer->isBlockAllocated(block_idx)) {
+                    mesh_layer->getBlockAtIndex(block_idx)
+                        ->expandColorsToMatchVerticesAsync(*cuda_stream_);
+                    block_indices.push_back(block_idx);
+                  }
+                });
 
   // Split block indices into two groups, one group containing indices with
   // corresponding ColorBlocks, and one without.
@@ -269,20 +269,24 @@ void MeshIntegrator::colorMeshGPU(
 }
 
 void MeshIntegrator::colorMeshCPU(const ColorLayer& color_layer,
-                                  BlockLayer<MeshBlock>* mesh_layer) {
-  colorMeshCPU(color_layer, mesh_layer->getAllBlockIndices(), mesh_layer);
+                                  BlockLayer<MeshBlock>* mesh_layer,
+                                  const CudaStream& cuda_stream) {
+  colorMeshCPU(color_layer, mesh_layer->getAllBlockIndices(), mesh_layer,
+               cuda_stream);
 }
 
 void MeshIntegrator::colorMeshCPU(const ColorLayer& color_layer,
                                   const std::vector<Index3D>& block_indices,
-                                  BlockLayer<MeshBlock>* mesh_layer) {
+                                  BlockLayer<MeshBlock>* mesh_layer,
+                                  const CudaStream& cuda_stream) {
   // For each vertex just grab the closest color
   for (const Index3D& block_idx : block_indices) {
     MeshBlock::Ptr block = mesh_layer->getBlockAtIndex(block_idx);
     if (block == nullptr) {
       continue;
     }
-    block->colors.resize(block->vertices.size());
+    block->colors.resizeAsync(block->vertices.size(), cuda_stream);
+    cuda_stream.synchronize();
     for (size_t i = 0; i < block->vertices.size(); i++) {
       const Vector3f& vertex = block->vertices[i];
       const ColorVoxel* color_voxel;

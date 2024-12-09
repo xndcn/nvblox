@@ -15,7 +15,7 @@
 *.pch
 
 # Compiled Dynamic libraries
-*.so
+# Note that .so files are not ignored since the repo contains symlinks to such files
 *.dylib
 *.dll
 
@@ -47,6 +47,7 @@ TAGS
 *.pyc
 **/*.egg-info
 **/__pycache__
+**/.hypothesis/*
 
 # Documentation
 *docs/_build

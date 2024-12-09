@@ -1,2 +1,2 @@
-# Don't copy build files into a docker image
-*/build*
+build
+docker/Dockerfile.build

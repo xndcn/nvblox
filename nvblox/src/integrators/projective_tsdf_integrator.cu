@@ -28,7 +28,17 @@ struct UpdateTsdfVoxelFunctor {
 
   // Vector3f p_voxel_C, float depth, TsdfVoxel* voxel_ptr
   __device__ bool operator()(const float surface_depth_measured,
-                             const float voxel_depth_m, TsdfVoxel* voxel_ptr) {
+                             const float voxel_depth_m, const bool is_masked,
+                             TsdfVoxel* voxel_ptr) {
+    // Ignore invalid (negative) depth measurements.
+    if (surface_depth_measured <= 0.F) {
+      if (invalid_depth_decay_factor_ >= 0.F) {
+        // Invalid depth pixels are decayed aggresively
+        voxel_ptr->weight *= invalid_depth_decay_factor_;
+      }
+      return false;
+    }
+
     // Get the distance between the voxel we're updating the surface.
     // Note that the distance is the projective distance, i.e. the distance
     // along the ray.
@@ -37,6 +47,13 @@ struct UpdateTsdfVoxelFunctor {
 
     // If we're behind the negative truncation distance, just continue.
     if (voxel_to_surface_distance < -truncation_distance_m_) {
+      return false;
+    }
+
+    // Handle unmasked depth pixels. We do not want to integrate
+    // them, but we still want to clear any voxels in front of the surface. We
+    // therefore integrate only up until the positive truncation distance.
+    if (!is_masked && voxel_to_surface_distance < truncation_distance_m_) {
       return false;
     }
 
@@ -74,6 +91,8 @@ struct UpdateTsdfVoxelFunctor {
 
   float truncation_distance_m_ = 0.2f;
   float max_weight_ = kProjectiveIntegratorMaxWeightParamDesc.default_value;
+  float invalid_depth_decay_factor_ =
+      kProjectiveIntegratorMaxWeightParamDesc.default_value;
 
   WeightingFunction weighting_function_ =
       kProjectiveIntegratorWeightingModeParamDesc.default_value;
@@ -103,6 +122,8 @@ ProjectiveTsdfIntegrator::getTsdfUpdateFunctorOnDevice(float voxel_size) {
   update_functor_host_ptr_->max_weight_ = max_weight();
   update_functor_host_ptr_->truncation_distance_m_ =
       get_truncation_distance_m(voxel_size);
+  update_functor_host_ptr_->invalid_depth_decay_factor_ =
+      invalid_depth_decay_factor();
   update_functor_host_ptr_->weighting_function_ =
       WeightingFunction(weighting_function_type_);
   // Transfer to the device
@@ -111,8 +132,9 @@ ProjectiveTsdfIntegrator::getTsdfUpdateFunctorOnDevice(float voxel_size) {
 }
 
 void ProjectiveTsdfIntegrator::integrateFrame(
-    const DepthImage& depth_frame, const Transform& T_L_C, const Camera& camera,
-    TsdfLayer* layer, std::vector<Index3D>* updated_blocks) {
+    const MaskedDepthImageConstView& depth_frame, const Transform& T_L_C,
+    const Camera& camera, TsdfLayer* layer,
+    std::vector<Index3D>* updated_blocks) {
   // Get the update functor on the device
   unified_ptr<UpdateTsdfVoxelFunctor> update_functor_device_ptr =
       getTsdfUpdateFunctorOnDevice(layer->voxel_size());
@@ -123,8 +145,9 @@ void ProjectiveTsdfIntegrator::integrateFrame(
 }
 
 void ProjectiveTsdfIntegrator::integrateFrame(
-    const DepthImage& depth_frame, const Transform& T_L_C, const Lidar& lidar,
-    TsdfLayer* layer, std::vector<Index3D>* updated_blocks) {
+    const MaskedDepthImageConstView& depth_frame, const Transform& T_L_C,
+    const Lidar& lidar, TsdfLayer* layer,
+    std::vector<Index3D>* updated_blocks) {
   // Get the update functor on the device
   unified_ptr<UpdateTsdfVoxelFunctor> update_functor_device_ptr =
       getTsdfUpdateFunctorOnDevice(layer->voxel_size());
@@ -169,6 +192,15 @@ void ProjectiveTsdfIntegrator::marked_unobserved_voxels_weight(
   marked_unobserved_voxels_weight_ = marked_unobserved_voxels_weight;
 }
 
+float ProjectiveTsdfIntegrator::invalid_depth_decay_factor() const {
+  return invalid_depth_decay_factor_;
+}
+
+void ProjectiveTsdfIntegrator::invalid_depth_decay_factor(
+    float invalid_depth_decay_factor) {
+  invalid_depth_decay_factor_ = invalid_depth_decay_factor;
+}
+
 std::string ProjectiveTsdfIntegrator::getIntegratorName() const {
   return "tsdf";
 }
@@ -201,6 +233,8 @@ parameters::ParameterTreeNode ProjectiveTsdfIntegrator::getParameterTree(
                          marked_unobserved_voxels_weight_),
        ParameterTreeNode("weighting_function_type:", weighting_function_type_,
                          weighting_function_to_string),
+       ParameterTreeNode("invalid_depth_decay_factor:",
+                         invalid_depth_decay_factor_),
        ProjectiveIntegrator<TsdfVoxel>::getParameterTree()});
 }
 

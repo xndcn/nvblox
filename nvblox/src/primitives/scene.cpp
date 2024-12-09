@@ -122,7 +122,8 @@ bool Scene::getRayIntersection(const Vector3f& ray_origin,
 
 void Scene::generateDepthImageFromScene(const Camera& camera,
                                         const Transform& T_S_C, float max_dist,
-                                        DepthImage* depth_frame) const {
+                                        DepthImage* depth_frame,
+                                        const float invalid_depth) const {
   CHECK_NOTNULL(depth_frame);
   CHECK(depth_frame->memory_type() == MemoryType::kUnified)
       << "For scene generation DepthImage with memory_type == kUnified is "
@@ -150,11 +151,21 @@ void Scene::generateDepthImageFromScene(const Camera& camera,
         // Then we use the z coordinate in the camera frame to set the depth.
         (*depth_frame)(u_C.y(), u_C.x()) = p_C.z();
       } else {
-        // Otherwise set the depth to 0.0 to mark it as invalid.
-        (*depth_frame)(u_C.y(), u_C.x()) = 0.0f;
+        // Otherwise set the depth to invalid.
+        (*depth_frame)(u_C.y(), u_C.x()) = invalid_depth;
       }
     }
   }
+}
+
+std::vector<Primitive::Type> Scene::getPrimitiveTypeList() const {
+  std::vector<Primitive::Type> primitive_types;
+  std::transform(primitives_.begin(), primitives_.end(),
+                 std::back_inserter(primitive_types),
+                 [](const std::unique_ptr<Primitive>& primitive) {
+                   return primitive->getType();
+                 });
+  return primitive_types;
 }
 
 }  // namespace primitives

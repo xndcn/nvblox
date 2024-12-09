@@ -15,18 +15,88 @@ limitations under the License.
 */
 #include "nvblox/integrators/esdf_integrator.h"
 
+#include <assert.h>
+
+#include "thrust/sort.h"
+#include "thrust/unique.h"
+
 #include "cub/block/block_radix_sort.cuh"
 #include "nvblox/core/internal/cuda/atomic_float.cuh"
+#include "nvblox/core/internal/cuda/device_function_utils.cuh"
 #include "nvblox/geometry/bounding_boxes.h"
 #include "nvblox/geometry/bounding_spheres.h"
 #include "nvblox/gpu_hash/internal/cuda/gpu_hash_interface.cuh"
 #include "nvblox/gpu_hash/internal/cuda/gpu_indexing.cuh"
 #include "nvblox/gpu_hash/internal/cuda/gpu_set.cuh"
+#include "nvblox/integrators/internal/cuda/esdf_integrator_slicing.cuh"
 #include "nvblox/utils/timing.h"
-#include "thrust/sort.h"
-#include "thrust/unique.h"
 
 namespace nvblox {
+
+EsdfIntegrator::EsdfIntegrator()
+    : EsdfIntegrator(std::make_shared<CudaStreamOwning>()) {}
+
+EsdfIntegrator::EsdfIntegrator(std::shared_ptr<CudaStream> cuda_stream)
+    : cuda_stream_(cuda_stream) {}
+
+float EsdfIntegrator::max_esdf_distance_m() const {
+  return max_esdf_distance_m_;
+}
+
+float EsdfIntegrator::max_site_distance_vox() const {
+  return max_tsdf_site_distance_vox_;
+}
+
+float EsdfIntegrator::min_weight() const { return tsdf_min_weight_; }
+
+void EsdfIntegrator::max_esdf_distance_m(float max_esdf_distance_m) {
+  CHECK_GT(max_esdf_distance_m, 0.0f);
+  max_esdf_distance_m_ = max_esdf_distance_m;
+}
+
+void EsdfIntegrator::max_site_distance_vox(float max_site_distance_vox) {
+  CHECK_GT(max_site_distance_vox, 0.0f);
+  max_tsdf_site_distance_vox_ = max_site_distance_vox;
+}
+
+void EsdfIntegrator::min_weight(float min_weight) {
+  CHECK_GT(min_weight, 0.0f);
+  tsdf_min_weight_ = min_weight;
+}
+
+float EsdfIntegrator::occupied_threshold() const {
+  return probabilityFromLogOdds(occupied_threshold_log_odds_);
+}
+
+void EsdfIntegrator::occupied_threshold(float occupied_threshold) {
+  CHECK_GE(occupied_threshold, 0.0f);
+  CHECK_LE(occupied_threshold, 1.0f);
+  occupied_threshold_log_odds_ = logOddsFromProbability(occupied_threshold);
+}
+
+parameters::ParameterTreeNode EsdfIntegrator::getParameterTree(
+    const std::string& name_remap) const {
+  using parameters::ParameterTreeNode;
+  const std::string name =
+      (name_remap.empty()) ? "esdf_integrator" : name_remap;
+  return ParameterTreeNode(
+      name,
+      {
+          ParameterTreeNode("max_esdf_distance_m:", max_esdf_distance_m_),
+          ParameterTreeNode("max_tsdf_site_distance_vox:",
+                            max_tsdf_site_distance_vox_),
+          ParameterTreeNode("tsdf_min_weight:", tsdf_min_weight_),
+          ParameterTreeNode("occupied_threshold_log_odds:",
+                            occupied_threshold_log_odds_),
+          ParameterTreeNode("esdf_slice_min_height:", esdf_slice_min_height_),
+          ParameterTreeNode("esdf_slice_max_height:", esdf_slice_max_height_),
+          ParameterTreeNode("esdf_slice_height:", esdf_slice_height_),
+          ParameterTreeNode("slice_height_above_plane_m:",
+                            slice_height_above_plane_m_),
+          ParameterTreeNode("slice_height_thickness_m:",
+                            slice_height_thickness_m_),
+      });
+}
 
 __device__ bool isVoxelFreespace(const FreespaceBlock* freespace_block_ptr,
                                  const dim3& voxel_index) {
@@ -97,64 +167,55 @@ struct OccupancySiteFunctor {
   float occupied_threshold_log_odds;
 };
 
-EsdfIntegrator::EsdfIntegrator()
-    : EsdfIntegrator(std::make_shared<CudaStreamOwning>()) {}
-
-EsdfIntegrator::EsdfIntegrator(std::shared_ptr<CudaStream> cuda_stream)
-    : cuda_stream_(cuda_stream),
-      counter_buffer_device_(nullptr),
-      counter_buffer_host_(nullptr) {}
-
-float EsdfIntegrator::max_esdf_distance_m() const {
-  return max_esdf_distance_m_;
+__device__ void clearVoxelDevice(EsdfVoxel* voxel,
+                                 float max_squared_esdf_distance_vox) {
+  voxel->parent_direction.setZero();
+  voxel->squared_distance_vox = max_squared_esdf_distance_vox;
+  voxel->is_site = false;
 }
 
-float EsdfIntegrator::max_site_distance_vox() const {
-  return max_tsdf_site_distance_vox_;
+template <typename T>
+struct conditional_false : std::false_type {};
+
+// NOTE(alexmillane): We use these types below to eliminate the default
+// constructors of the voxel types such that they can be used with shared
+// memory. In our testing this is no longer required after CUDA 11.8. At some
+// point in the future (once the jetpack moves to >= 11.8) we can remove this.
+namespace {
+struct TsdfVoxelShared : public TsdfVoxel {
+  TsdfVoxelShared() {}
+};
+
+struct OccupancyVoxelShared : public OccupancyVoxel {
+  OccupancyVoxelShared() {}
+};
+
+template <typename VoxelType>
+struct SharedVoxel;
+
+template <>
+struct SharedVoxel<TsdfVoxel> {
+  typedef TsdfVoxelShared type;
+};
+
+template <>
+struct SharedVoxel<OccupancyVoxel> {
+  typedef OccupancyVoxelShared type;
+};
+
+// Returns z=0 if the input plane is nearly vertical, otherwise return the input
+// plane.
+Plane checkForVerticalPlane(const Plane& ground_plane) {
+  constexpr float kEps = 1e-4;
+  if (std::fabs(ground_plane.normal().z()) < kEps) {
+    LOG(WARNING)
+        << "You tried to slice with a near-vertical plane. Defaulting to z=0";
+    return Plane(Vector3f::UnitZ(), 0);
+  }
+  return ground_plane;
 }
 
-float EsdfIntegrator::min_weight() const { return tsdf_min_weight_; }
-
-void EsdfIntegrator::max_esdf_distance_m(float max_esdf_distance_m) {
-  CHECK_GT(max_esdf_distance_m, 0.0f);
-  max_esdf_distance_m_ = max_esdf_distance_m;
-}
-
-void EsdfIntegrator::max_site_distance_vox(float max_site_distance_vox) {
-  CHECK_GT(max_site_distance_vox, 0.0f);
-  max_tsdf_site_distance_vox_ = max_site_distance_vox;
-}
-
-void EsdfIntegrator::min_weight(float min_weight) {
-  CHECK_GT(min_weight, 0.0f);
-  tsdf_min_weight_ = min_weight;
-}
-
-float EsdfIntegrator::occupied_threshold() const {
-  return probabilityFromLogOdds(occupied_threshold_log_odds_);
-}
-
-void EsdfIntegrator::occupied_threshold(float occupied_threshold) {
-  CHECK_GE(occupied_threshold, 0.0f);
-  CHECK_LE(occupied_threshold, 1.0f);
-  occupied_threshold_log_odds_ = logOddsFromProbability(occupied_threshold);
-}
-
-parameters::ParameterTreeNode EsdfIntegrator::getParameterTree(
-    const std::string& name_remap) const {
-  using parameters::ParameterTreeNode;
-  const std::string name =
-      (name_remap.empty()) ? "esdf_integrator" : name_remap;
-  return ParameterTreeNode(
-      name, {
-                ParameterTreeNode("max_esdf_distance_m:", max_esdf_distance_m_),
-                ParameterTreeNode("max_tsdf_site_distance_vox:",
-                                  max_tsdf_site_distance_vox_),
-                ParameterTreeNode("tsdf_min_weight:", tsdf_min_weight_),
-                ParameterTreeNode("occupied_threshold_log_odds:",
-                                  occupied_threshold_log_odds_),
-            });
-}
+}  // namespace
 
 template <typename LayerType>
 void EsdfIntegrator::integrateBlocksTemplate(
@@ -180,7 +241,10 @@ void EsdfIntegrator::integrateBlocksTemplate(
 
   if (!to_clear_indices_device_.empty()) {
     timing::Timer compute_timer("esdf/integrate/clear");
-    clearAllInvalid(to_clear_indices_device_.toVector(), esdf_layer,
+    std::vector<Index3D> to_clear_indices =
+        to_clear_indices_device_.toVectorAsync(*cuda_stream_);
+    cuda_stream_->synchronize();
+    clearAllInvalid(to_clear_indices, esdf_layer,
                     &cleared_block_indices_device_);
     cuda_stream_->synchronize();
   }
@@ -191,6 +255,7 @@ void EsdfIntegrator::integrateBlocksTemplate(
   if (!cleared_block_indices_device_.empty()) {
     computeEsdf(cleared_block_indices_device_, esdf_layer);
   }
+  cuda_stream_->synchronize();
   compute_timer.Stop();
 }
 
@@ -215,10 +280,10 @@ void EsdfIntegrator::integrateBlocks(const OccupancyLayer& occupancy_layer,
                                           esdf_layer);
 }
 
-template <typename LayerType>
+template <typename LayerType, typename SliceDescriptionType>
 void EsdfIntegrator::integrateSliceTemplate(
     const LayerType& layer, const std::vector<Index3D>& block_indices,
-    float z_min, float z_max, float z_output, EsdfLayer* esdf_layer,
+    const SliceDescriptionType& slice_spec, EsdfLayer* esdf_layer,
     const FreespaceLayer* freespace_layer_ptr) {
   timing::Timer esdf_timer("esdf/integrate_slice");
 
@@ -229,8 +294,8 @@ void EsdfIntegrator::integrateSliceTemplate(
   timing::Timer mark_timer("esdf/integrate_slice/mark_sites");
   // Then, mark all the sites on GPU.
   // This finds all the blocks that are eligible to be parents.
-  markSitesInSlice(layer, block_indices, z_min, z_max, z_output,
-                   freespace_layer_ptr, esdf_layer, &updated_indices_device_,
+  markSitesInSlice(layer, block_indices, slice_spec, freespace_layer_ptr,
+                   esdf_layer, &updated_indices_device_,
                    &to_clear_indices_device_);
   mark_timer.Stop();
 
@@ -252,27 +317,75 @@ void EsdfIntegrator::integrateSliceTemplate(
 
 void EsdfIntegrator::integrateSlice(const TsdfLayer& tsdf_layer,
                                     const std::vector<Index3D>& block_indices,
-                                    float z_min, float z_max, float z_output,
                                     EsdfLayer* esdf_layer) {
-  integrateSliceTemplate<TsdfLayer>(tsdf_layer, block_indices, z_min, z_max,
-                                    z_output, esdf_layer);
+  ConstantZSliceDescription slice_description{.z_min_m = esdf_slice_min_height_,
+                                              .z_max_m = esdf_slice_max_height_,
+                                              .z_output_m = esdf_slice_height_};
+  integrateSliceTemplate<TsdfLayer>(tsdf_layer, block_indices,
+                                    slice_description, esdf_layer);
 }
 
 void EsdfIntegrator::integrateSlice(const TsdfLayer& tsdf_layer,
                                     const FreespaceLayer& freespace_layer,
                                     const std::vector<Index3D>& block_indices,
-                                    float z_min, float z_max, float z_output,
                                     EsdfLayer* esdf_layer) {
-  integrateSliceTemplate<TsdfLayer>(tsdf_layer, block_indices, z_min, z_max,
-                                    z_output, esdf_layer, &freespace_layer);
+  ConstantZSliceDescription slice_description{.z_min_m = esdf_slice_min_height_,
+                                              .z_max_m = esdf_slice_max_height_,
+                                              .z_output_m = esdf_slice_height_};
+  integrateSliceTemplate<TsdfLayer>(tsdf_layer, block_indices,
+                                    slice_description, esdf_layer,
+                                    &freespace_layer);
 }
 
 void EsdfIntegrator::integrateSlice(const OccupancyLayer& occupancy_layer,
                                     const std::vector<Index3D>& block_indices,
-                                    float z_min, float z_max, float z_output,
                                     EsdfLayer* esdf_layer) {
-  integrateSliceTemplate<OccupancyLayer>(occupancy_layer, block_indices, z_min,
-                                         z_max, z_output, esdf_layer);
+  ConstantZSliceDescription slice_description{.z_min_m = esdf_slice_min_height_,
+                                              .z_max_m = esdf_slice_max_height_,
+                                              .z_output_m = esdf_slice_height_};
+  integrateSliceTemplate<OccupancyLayer>(occupancy_layer, block_indices,
+                                         slice_description, esdf_layer);
+}
+
+void EsdfIntegrator::integrateSlice(const TsdfLayer& tsdf_layer,
+                                    const std::vector<Index3D>& block_indices,
+                                    const Plane& ground_plane,
+                                    EsdfLayer* esdf_layer) {
+  PlanarSliceDescription slice_description{
+      .ground_plane = checkForVerticalPlane(ground_plane),
+      .slice_height_above_plane_m = slice_height_above_plane_m_,
+      .slice_height_thickness_m = slice_height_thickness_m_,
+      .z_output_m = esdf_slice_height_};
+  integrateSliceTemplate<TsdfLayer>(tsdf_layer, block_indices,
+                                    slice_description, esdf_layer);
+}
+
+void EsdfIntegrator::integrateSlice(const TsdfLayer& tsdf_layer,
+                                    const FreespaceLayer& freespace_layer,
+                                    const std::vector<Index3D>& block_indices,
+                                    const Plane& ground_plane,
+                                    EsdfLayer* esdf_layer) {
+  PlanarSliceDescription slice_description{
+      .ground_plane = checkForVerticalPlane(ground_plane),
+      .slice_height_above_plane_m = slice_height_above_plane_m_,
+      .slice_height_thickness_m = slice_height_thickness_m_,
+      .z_output_m = esdf_slice_height_};
+  integrateSliceTemplate<TsdfLayer>(tsdf_layer, block_indices,
+                                    slice_description, esdf_layer,
+                                    &freespace_layer);
+}
+
+void EsdfIntegrator::integrateSlice(const OccupancyLayer& occupancy_layer,
+                                    const std::vector<Index3D>& block_indices,
+                                    const Plane& ground_plane,
+                                    EsdfLayer* esdf_layer) {
+  PlanarSliceDescription slice_description{
+      .ground_plane = checkForVerticalPlane(ground_plane),
+      .slice_height_above_plane_m = slice_height_above_plane_m_,
+      .slice_height_thickness_m = slice_height_thickness_m_,
+      .z_output_m = esdf_slice_height_};
+  integrateSliceTemplate<OccupancyLayer>(occupancy_layer, block_indices,
+                                         slice_description, esdf_layer);
 }
 
 void EsdfIntegrator::allocateBlocksOnCPU(
@@ -283,11 +396,68 @@ void EsdfIntegrator::allocateBlocksOnCPU(
   }
 }
 
-__device__ void clearVoxelDevice(EsdfVoxel* voxel,
-                                 float max_squared_esdf_distance_vox) {
-  voxel->parent_direction.setZero();
-  voxel->squared_distance_vox = max_squared_esdf_distance_vox;
-  voxel->is_site = false;
+// The function looks at the current value of the input TSDF/Occupancy voxel
+// and the currect value of the pass ESDF voxel and updates it.
+template <typename VoxelType, typename SiteFunctorType>
+__device__ void updateEsdfVoxelToChanges(
+    const VoxelType* voxel_ptr,                 // NOLINT
+    const bool is_observed,                     // NOLINT
+    const bool is_freespace,                    // NOLINT
+    const SiteFunctorType& site_functor,        // NOLINT
+    const float max_squared_esdf_distance_vox,  // NOLINT
+    EsdfVoxel* esdf_voxel_ptr,                  // NOLINT
+    bool* cleared,                              // NOLINT
+    bool* updated) {
+  if (is_observed) {
+    // Mark as inside if the voxel distance is negative.
+    // Note: Voxels being freespace can not be inside an object.
+    const bool is_inside =
+        site_functor.isVoxelInsideObject(*voxel_ptr) & !is_freespace;
+    // Mark site if inside and close to boundary.
+    const bool is_site =
+        is_inside && site_functor.isVoxelNearSurface(*voxel_ptr);
+
+    // Handle flips in "is_inside"
+    if (esdf_voxel_ptr->is_inside && is_inside == false) {
+      clearVoxelDevice(esdf_voxel_ptr, max_squared_esdf_distance_vox);
+      *cleared = true;
+    }
+    esdf_voxel_ptr->is_inside = is_inside;
+
+    if (is_site) {
+      if (esdf_voxel_ptr->is_site) {
+        // Ok whatever. Add to the site list.
+        // Its existing values are fine.
+        *updated = true;
+      } else {
+        // Wasn't a site before, is now.
+        esdf_voxel_ptr->is_site = true;
+        esdf_voxel_ptr->squared_distance_vox = 0.0f;
+        esdf_voxel_ptr->parent_direction.setZero();
+        *updated = true;
+      }
+    } else {
+      // Here we have to double-check what's going on.
+      // If it was a site before, and isn't anymore, we have to clear it.
+      if (esdf_voxel_ptr->is_site) {
+        clearVoxelDevice(esdf_voxel_ptr, max_squared_esdf_distance_vox);
+        *cleared = true;
+      } else if (!esdf_voxel_ptr->observed) {
+        // This is a brand new voxel.
+        clearVoxelDevice(esdf_voxel_ptr, max_squared_esdf_distance_vox);
+      } else if (esdf_voxel_ptr->squared_distance_vox <= 1e-4) {
+        // This is somehow invalidly marked as a site despite the fact
+        // it shouldn't be.
+        clearVoxelDevice(esdf_voxel_ptr, max_squared_esdf_distance_vox);
+        *cleared = true;
+      }
+    }
+    esdf_voxel_ptr->observed = true;
+  } else {
+    clearVoxelDevice(esdf_voxel_ptr, max_squared_esdf_distance_vox);
+    *cleared = true;
+    esdf_voxel_ptr->observed = false;
+  }
 }
 
 // Mark sites to lower & clear.
@@ -310,8 +480,8 @@ __global__ void markAllSitesKernel(
   __shared__ BlockType* block_ptr;
   __shared__ FreespaceBlock* freespace_block_ptr;
   __shared__ EsdfBlock* esdf_block;
-  __shared__ int updated;
-  __shared__ int to_clear;
+  __shared__ bool updated;
+  __shared__ bool cleared;
   __syncthreads();
 
   if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
@@ -319,7 +489,7 @@ __global__ void markAllSitesKernel(
     freespace_block_ptr = nullptr;
     esdf_block = nullptr;
     updated = false;
-    to_clear = false;
+    cleared = false;
     auto tsdf_it = input_layer_block_hash.find(block_indices[block_idx]);
     if (tsdf_it != input_layer_block_hash.end()) {
       block_ptr = tsdf_it->second;
@@ -346,289 +516,25 @@ __global__ void markAllSitesKernel(
   // Get the correct voxel for this index.
   const VoxelType* voxel_ptr =
       &block_ptr->voxels[voxel_index.x][voxel_index.y][voxel_index.z];
-  EsdfVoxel* esdf_voxel =
+  EsdfVoxel* esdf_voxel_ptr =
       &esdf_block->voxels[voxel_index.x][voxel_index.y][voxel_index.z];
-  if (site_functor.isVoxelObserved(*voxel_ptr)) {
-    // Mark as inside if the voxel distance is negative.
-    bool is_inside = site_functor.isVoxelInsideObject(*voxel_ptr);
-    // Voxels being freespace can not be inside an object.
-    is_inside &= !isVoxelFreespace(freespace_block_ptr, voxel_index);
-    // Esdf sites are ignored if they fall into freespace
-    if (esdf_voxel->is_inside && is_inside == false) {
-      clearVoxelDevice(esdf_voxel, max_squared_esdf_distance_vox);
-      to_clear = true;
-    }
-    esdf_voxel->is_inside = is_inside;
-    if (is_inside && site_functor.isVoxelNearSurface(*voxel_ptr)) {
-      esdf_voxel->is_site = true;
-      esdf_voxel->squared_distance_vox = 0.0f;
-      esdf_voxel->parent_direction.setZero();
-      updated = true;
-    } else {
-      if (esdf_voxel->is_site) {
-        esdf_voxel->is_site = false;
-        // This voxel needs to be cleared.
-        clearVoxelDevice(esdf_voxel, max_squared_esdf_distance_vox);
-        to_clear = true;
-      } else if (!esdf_voxel->observed) {
-        // This is a brand new voxel.
-        clearVoxelDevice(esdf_voxel, max_squared_esdf_distance_vox);
-      } else if (esdf_voxel->squared_distance_vox <= 1e-4) {
-        // This is an invalid voxel that should be cleared.
-        clearVoxelDevice(esdf_voxel, max_squared_esdf_distance_vox);
-        to_clear = true;
-      }
-    }
-    esdf_voxel->observed = true;
-  } else {
-    clearVoxelDevice(esdf_voxel, max_squared_esdf_distance_vox);
-    to_clear = true;
-    esdf_voxel->observed = false;
-  }
 
+  const bool is_observed = site_functor.isVoxelObserved(*voxel_ptr);
+  const bool is_freespace = isVoxelFreespace(freespace_block_ptr, voxel_index);
+
+  // Update the ESDF voxel based on changes to the input layer.
+  updateEsdfVoxelToChanges(voxel_ptr, is_observed, is_freespace, site_functor,
+                           max_squared_esdf_distance_vox, esdf_voxel_ptr,
+                           &cleared, &updated);
   __syncthreads();
-
+  // Now output the updated and cleared.
+  // Do this once per block.
   if (threadIdx.x == 1 && threadIdx.y == 1 && threadIdx.z == 1) {
     if (updated) {
       updated_vec[atomicAdd(updated_vec_size, 1)] = block_indices[block_idx];
     }
-    if (to_clear) {
-      to_clear_vec[atomicAdd(to_clear_vec_size, 1)] = block_indices[block_idx];
-    }
-  }
-}
-
-template <typename T>
-struct conditional_false : std::false_type {};
-
-// NOTE(alexmillane): We use these types below to eliminate the default
-// constructors of the voxel types such that they can be used with shared
-// memory. In our testing this is no longer required after CUDA 11.8. At some
-// point in the future (once the jetpack moves to >= 11.8) we can remove this.
-namespace {
-
-struct TsdfVoxelShared : public TsdfVoxel {
-  TsdfVoxelShared() {}
-};
-
-struct OccupancyVoxelShared : public OccupancyVoxel {
-  OccupancyVoxelShared() {}
-};
-
-template <typename VoxelType>
-struct SharedVoxel;
-
-template <>
-struct SharedVoxel<TsdfVoxel> {
-  typedef TsdfVoxelShared type;
-};
-
-template <>
-struct SharedVoxel<OccupancyVoxel> {
-  typedef OccupancyVoxelShared type;
-};
-
-}  // namespace
-
-// ThreadsPerBlock: kVoxelsPerSide * kVoxelsPerSide * num_vertical_blocks
-// ThreadBlockDim: number_of_blocks_in_slice * 1 * 1.
-// NOTE(remos): All block indices have the same z-value (output_block_index_z)
-// and no block index is duplicated.
-template <typename BlockType, typename SiteFunctorType>
-__global__ void markSitesInSliceKernel(
-    Index3D* block_indices_in_output_slice,
-    const Index3DDeviceHashMapType<BlockType> input_layer_block_hash,
-    const Index3DDeviceHashMapType<FreespaceBlock> freespace_block_hash,
-    Index3DDeviceHashMapType<EsdfBlock> esdf_block_hash,
-    const SiteFunctorType site_functor, float max_squared_esdf_distance_vox,
-    int min_input_block_index_z, int min_input_voxel_index_z,
-    int max_input_voxel_index_z, int output_slice_voxel_index_z,
-    float block_size, Index3D* updated_vec, int* updated_vec_size,
-    Index3D* to_clear_vec, int* to_clear_vec_size) {
-  // Voxel indices on the slice (x/y plane)
-  int voxel_idx_x = threadIdx.x;
-  int voxel_idx_y = threadIdx.y;
-  // The vertical index offset of the block we want to process
-  // Ranging from [0, num_vertical_blocks]
-  int vertical_block_idx_offset = threadIdx.z;
-  // Number of blocks in a vertical column
-  int num_vertical_blocks = blockDim.z;
-  // The vector index used to get the block from the
-  // block_indices_in_output_slice vector
-  int block_vector_idx = blockIdx.x;
-
-  using VoxelType = typename BlockType::VoxelType;
-
-  constexpr int kVoxelsPerSide = BlockType::kVoxelsPerSide;
-
-  // First port-of-call is squashing a 3D band of the surface reconstruction to
-  // 2D. First we allocating 2D arrays for the output.
-  __shared__ bool observed[kVoxelsPerSide][kVoxelsPerSide];
-  __shared__ typename SharedVoxel<VoxelType>::type voxel_slice[kVoxelsPerSide]
-                                                              [kVoxelsPerSide];
-  __shared__ Index3D esdf_slice_block_index;
-  __shared__ EsdfBlock* esdf_slice_block_ptr;
-  __shared__ bool updated, cleared;
-
-  // Initialize this once for each voxel in the x/y plane.
-  if (vertical_block_idx_offset == 0) {
-    observed[voxel_idx_x][voxel_idx_y] = false;
-    if constexpr (std::is_same<TsdfVoxel, VoxelType>::value) {
-      // NOTE(alexmillane): We don't use the weight in the slice, so we don't
-      // initialize it.
-      voxel_slice[voxel_idx_x][voxel_idx_y].distance =
-          2 * max_squared_esdf_distance_vox;
-    } else if constexpr (std::is_same<OccupancyVoxel, VoxelType>::value) {
-      voxel_slice[voxel_idx_x][voxel_idx_y].log_odds = 0.0f;
-    } else {
-      static_assert(conditional_false<BlockType>::value,
-                    "Slicing not specialized to LayerType yet.");
-    }
-  }
-  // Initialize this once for each block in the x/y plane (i.e. for each block
-  // in block_indices_in_output_slice).
-  if (voxel_idx_x == 0 && voxel_idx_y == 0 && vertical_block_idx_offset == 0) {
-    updated = false;
-    cleared = false;
-    esdf_slice_block_index = block_indices_in_output_slice[block_vector_idx];
-    esdf_slice_block_ptr = nullptr;
-    auto it = esdf_block_hash.find(esdf_slice_block_index);
-    if (it != esdf_block_hash.end()) {
-      esdf_slice_block_ptr = it->second;
-    }
-  }
-  __syncthreads();
-
-  // This shouldn't happen.
-  if (esdf_slice_block_ptr == nullptr) {
-    printf(
-        "No output block exists in markSitesInSliceKernel(). Shouldn't "
-        "happen.\n");
-    return;
-  }
-
-  // Get the block in the vertical column depending on the current offset.
-  Index3D block_in_column_index = esdf_slice_block_index;
-  block_in_column_index.z() =
-      min_input_block_index_z + vertical_block_idx_offset;
-
-  // Get the corresponding block pointers.
-  const BlockType* block_in_column_ptr = nullptr;
-  auto it = input_layer_block_hash.find(block_in_column_index);
-  if (it != input_layer_block_hash.end()) {
-    block_in_column_ptr = it->second;
-  }
-  const FreespaceBlock* freespace_block_ptr = nullptr;
-  if (!freespace_block_hash.empty()) {
-    auto freespace_it = freespace_block_hash.find(block_in_column_index);
-    if (freespace_it != freespace_block_hash.end()) {
-      freespace_block_ptr = freespace_it->second;
-    }
-  }
-
-  // There's also null pointers in there.
-  if (block_in_column_ptr != nullptr) {
-    // Iterate over all of the voxels in this block column:
-    // - block in block column in parallel (see block_in_column_ptr above)
-    // - x/y voxel index in parallel (with voxel_idx_x/voxel_idx_y)
-    // - z voxel index with for loop
-    // Write the minimum values found vertically into the 2D-voxel_slice.
-    int start_index = 0;
-    int end_index = kVoxelsPerSide;
-    if (vertical_block_idx_offset == 0) {
-      start_index = min_input_voxel_index_z;
-    }
-    if (vertical_block_idx_offset == num_vertical_blocks - 1) {
-      end_index = max_input_voxel_index_z;
-    }
-    for (int i = start_index; i < end_index; i++) {
-      const VoxelType* voxel_ptr =
-          &block_in_column_ptr->voxels[voxel_idx_x][voxel_idx_y][i];
-      // Get the correct voxel for this index.
-      if (site_functor.isVoxelObserved(*voxel_ptr)) {
-        observed[voxel_idx_x][voxel_idx_y] = true;
-        const bool is_freespace = isVoxelFreespace(
-            freespace_block_ptr, dim3(voxel_idx_x, voxel_idx_y, i));
-        site_functor.updateSquashedExtremumAtomic(
-            *voxel_ptr, is_freespace, &voxel_slice[voxel_idx_x][voxel_idx_y]);
-      }
-    }
-  }
-
-  // sync threads across everyone trying to update this voxel
-  __syncthreads();
-
-  // Ok now we compare the new and old values and decide what to output.
-  // Do this once for each voxel in the x/y plane.
-  if (vertical_block_idx_offset == 0) {
-    EsdfVoxel* esdf_voxel =
-        &esdf_slice_block_ptr
-             ->voxels[voxel_idx_x][voxel_idx_y][output_slice_voxel_index_z];
-
-    // Case 0: Just skip it if it's unobserved. We don't care.
-    if (observed[voxel_idx_x][voxel_idx_y]) {
-      // Determine if the new value puts us inside or in a site.
-      const bool is_inside = site_functor.isVoxelInsideObject(
-          voxel_slice[voxel_idx_x][voxel_idx_y]);
-      const bool is_site =
-          is_inside && site_functor.isVoxelNearSurface(
-                           voxel_slice[voxel_idx_x][voxel_idx_y]);
-
-      // First handle the case where the voxel is a site.
-      if (is_site) {
-        if (esdf_voxel->is_site) {
-          // Ok whatever. Add to the site list.
-          // Its existing values are fine.
-          updated = true;
-        } else {
-          // Wasn't a site before, is now.
-          esdf_voxel->observed = true;
-          esdf_voxel->squared_distance_vox = 0.0f;
-          esdf_voxel->parent_direction.setZero();
-          esdf_voxel->is_site = true;
-          updated = true;
-        }
-      } else {
-        // Here we have to double-check what's going on.
-        // If it was a site before, and isn't anymore, we have to clear it.
-        if (esdf_voxel->is_site) {
-          esdf_voxel->is_site = false;
-          clearVoxelDevice(esdf_voxel, max_squared_esdf_distance_vox);
-          cleared = true;
-        }
-        // Otherwise just leave it alone unless it's brand new.
-        if (!esdf_voxel->observed) {
-          esdf_voxel->observed = true;
-          clearVoxelDevice(esdf_voxel, max_squared_esdf_distance_vox);
-        } else if (esdf_voxel->is_inside != is_inside) {
-          // In case the sidedness swapped, clear the voxel.
-          clearVoxelDevice(esdf_voxel, max_squared_esdf_distance_vox);
-          cleared = true;
-        } else if (esdf_voxel->squared_distance_vox <= 0.0f) {
-          // This is somehow invalidly marked as a site despite the fact
-          // it shouldn't be.
-          clearVoxelDevice(esdf_voxel, max_squared_esdf_distance_vox);
-          cleared = true;
-        }
-      }
-      // Make the sidedness match.
-      esdf_voxel->is_inside = is_inside;
-    } else {
-      clearVoxelDevice(esdf_voxel, max_squared_esdf_distance_vox);
-      cleared = true;
-      esdf_voxel->observed = false;
-    }
-  }
-
-  __syncthreads();
-  // Now output the updated and cleared.
-  // Do this once for each block in the slice.
-  if (voxel_idx_x == 0 && voxel_idx_y == 0 && vertical_block_idx_offset == 0) {
-    if (updated) {
-      updated_vec[atomicAdd(updated_vec_size, 1)] = esdf_slice_block_index;
-    }
     if (cleared) {
-      to_clear_vec[atomicAdd(to_clear_vec_size, 1)] = esdf_slice_block_index;
+      to_clear_vec[atomicAdd(to_clear_vec_size, 1)] = block_indices[block_idx];
     }
   }
 }
@@ -794,29 +700,18 @@ void EsdfIntegrator::markAllSites(const LayerType& layer,
   block_indices_device_.copyFromAsync(block_indices, *cuda_stream_);
   blocks_with_sites->resizeAsync(num_blocks, *cuda_stream_);
   cleared_blocks->resizeAsync(num_blocks, *cuda_stream_);
-
-  if (updated_counter_device_ == nullptr || updated_counter_host_ == nullptr) {
-    updated_counter_device_ = make_unified<int>(MemoryType::kDevice);
-    updated_counter_host_ = make_unified<int>(MemoryType::kHost);
-  }
   updated_counter_device_.setZeroAsync(*cuda_stream_);
-  if (cleared_counter_device_ == nullptr || cleared_counter_host_ == nullptr) {
-    cleared_counter_device_ = make_unified<int>(MemoryType::kDevice);
-    cleared_counter_host_ = make_unified<int>(MemoryType::kHost);
-  }
   cleared_counter_device_.setZeroAsync(*cuda_stream_);
 
-  GPULayerView<EsdfBlock> esdf_layer_view =
-      esdf_layer->getGpuLayerViewAsync(*cuda_stream_);
-  GPULayerView<typename LayerType::BlockType> input_layer_view =
-      layer.getGpuLayerViewAsync(*cuda_stream_);
+  GPULayerView<EsdfBlock>& esdf_layer_view =
+      esdf_layer->getGpuLayerView(*cuda_stream_);
+  GPULayerView<typename LayerType::BlockType>& input_layer_view =
+      layer.getGpuLayerView(*cuda_stream_);
 
   Index3DDeviceHashMapType<FreespaceBlock> freespace_hash_map;
   if (freespace_layer_ptr != nullptr) {
     freespace_hash_map =
-        freespace_layer_ptr->getGpuLayerViewAsync(*cuda_stream_)
-            .getHash()
-            .impl_;
+        freespace_layer_ptr->getGpuLayerView(*cuda_stream_).getHash().impl_;
   }
 
   // Get the marking functions for this layer type
@@ -851,25 +746,200 @@ void EsdfIntegrator::markAllSites(const LayerType& layer,
   pack_out_timer.Stop();
 }
 
-// Helper function
-std::pair<int, int> getBlockAndVoxelZIndexFromHeightInLayer(
-    const float block_size, float height_in_layer) {
-  Index3D block_index;
-  Index3D voxel_index;
-  getBlockAndVoxelIndexFromPositionInLayer(
-      block_size, Vector3f(0.0f, 0.0f, height_in_layer), &block_index,
-      &voxel_index);
-  return {block_index.z(), voxel_index.z()};
+// ThreadsPerBlock: kVoxelsPerSide * kVoxelsPerSide * num_vertical_blocks
+// ThreadBlockDim: number_of_blocks_in_slice * 1 * 1.
+// NOTE(remos): All block indices have the same z-value (output_block_index_z)
+// and no block index is duplicated.
+template <typename BlockType, typename SiteFunctorType, typename SlicerType>
+__global__ void markSitesInSliceKernel(
+    Index3D* block_indices_in_output_slice,
+    const Index3DDeviceHashMapType<BlockType> input_layer_block_hash,
+    const Index3DDeviceHashMapType<FreespaceBlock> freespace_block_hash,
+    Index3DDeviceHashMapType<EsdfBlock> esdf_block_hash,
+    const SiteFunctorType site_functor, float max_squared_esdf_distance_vox,
+    int output_slice_voxel_index_z, float block_size,
+    // ConstantZColumnBoundsGetter slice_bounds_functor,
+    const SlicerType slicer, Index3D* updated_vec, int* updated_vec_size,
+    Index3D* to_clear_vec, int* to_clear_vec_size) {
+  // Voxel indices on the slice (x/y plane)
+  const int voxel_idx_x = threadIdx.x;
+  const int voxel_idx_y = threadIdx.y;
+  // The vertical index offset of the block we want to process
+  // Ranging from [0, num_vertical_blocks]
+  const int vertical_block_idx_offset = threadIdx.z;
+  // The vector index used to get the block from the
+  // block_indices_in_output_slice vector
+  const int block_vector_idx = blockIdx.x;
+
+  using VoxelType = typename BlockType::VoxelType;
+
+  constexpr int kVoxelsPerSide = BlockType::kVoxelsPerSide;
+
+  // First port-of-call is squashing a 3D band of the surface reconstruction to
+  // 2D. First we allocating 2D arrays for the output.
+  __shared__ bool observed[kVoxelsPerSide][kVoxelsPerSide];
+  __shared__ typename SharedVoxel<VoxelType>::type voxel_slice[kVoxelsPerSide]
+                                                              [kVoxelsPerSide];
+  __shared__ Index3D esdf_slice_block_index;
+  __shared__ EsdfBlock* esdf_slice_block_ptr;
+  __shared__ bool updated, cleared;
+
+  // Initialize this once for each voxel in the x/y plane.
+  // Called by: x*y threads - one plane in the ThreadBlock
+  if (vertical_block_idx_offset == 0) {
+    observed[voxel_idx_x][voxel_idx_y] = false;
+    if constexpr (std::is_same<TsdfVoxel, VoxelType>::value) {
+      // NOTE(alexmillane): We don't use the weight in the slice, so we don't
+      // initialize it.
+      voxel_slice[voxel_idx_x][voxel_idx_y].distance =
+          2 * max_squared_esdf_distance_vox;
+    } else if constexpr (std::is_same<OccupancyVoxel, VoxelType>::value) {
+      voxel_slice[voxel_idx_x][voxel_idx_y].log_odds = 0.0f;
+    } else {
+      static_assert(conditional_false<BlockType>::value,
+                    "Slicing not specialized to LayerType yet.");
+    }
+  }
+  // Initialize this once for each block in the x/y plane (i.e. for each block
+  // in block_indices_in_output_slice).
+  // Called by: 1 thread per threadBlock.
+  callWithFirstThreadInEachBlock([&block_indices_in_output_slice,
+                                  &block_vector_idx, &esdf_block_hash]() {
+    updated = false;
+    cleared = false;
+    esdf_slice_block_index = block_indices_in_output_slice[block_vector_idx];
+    esdf_slice_block_ptr = nullptr;
+    auto it = esdf_block_hash.find(esdf_slice_block_index);
+    if (it != esdf_block_hash.end()) {
+      esdf_slice_block_ptr = it->second;
+    }
+  });
+
+  __syncthreads();
+
+  // This shouldn't happen.
+  if (esdf_slice_block_ptr == nullptr) {
+    printf(
+        "No output block exists in markSitesInSliceKernel(). Shouldn't "
+        "happen.\n");
+    return;
+  }
+
+  // Get the block_idx and voxel_idx range for this x,y location.
+  const ColumnBounds column_bounds = slicer.getColumnBounds(
+      Index2D(esdf_slice_block_index.x(), esdf_slice_block_index.y()),
+      Index2D(voxel_idx_x, voxel_idx_y));
+
+  // Get the block in the vertical column depending on the current offset.
+  Index3D block_in_column_index = esdf_slice_block_index;
+  block_in_column_index.z() =
+      column_bounds.min_block_idx_z() + vertical_block_idx_offset;
+
+  // Get the corresponding block pointers.
+  // Grab a TSDF/Occupancy block from the input layer.
+  const BlockType* block_in_column_ptr = nullptr;
+  auto it = input_layer_block_hash.find(block_in_column_index);
+  if (it != input_layer_block_hash.end()) {
+    block_in_column_ptr = it->second;
+  }
+  const FreespaceBlock* freespace_block_ptr = nullptr;
+  if (!freespace_block_hash.empty()) {
+    auto freespace_it = freespace_block_hash.find(block_in_column_index);
+    if (freespace_it != freespace_block_hash.end()) {
+      freespace_block_ptr = freespace_it->second;
+    }
+  }
+
+  // There's also null pointers in there.
+  if (block_in_column_ptr != nullptr &&
+      column_bounds.isBlockIdxInRange(block_in_column_index.z())) {
+    // Iterate over all of the voxels in this block column:
+    // - block in block column in parallel (see block_in_column_ptr above)
+    // - x/y voxel index in parallel (with voxel_idx_x/voxel_idx_y)
+    // - z voxel index with for loop
+    // Get the indices of the min and max voxel indices in the slice, in this
+    // block.
+    const auto [voxel_start_index, voxel_end_index] =
+        column_bounds.getMinAndMaxVoxelZIndex(block_in_column_index.z());
+
+    // Accumulate extremum values in the voxel slice. Note that the range
+    // *includes* in end voxel.
+    for (int i = voxel_start_index; i <= voxel_end_index; i++) {
+      const VoxelType* voxel_ptr =
+          &block_in_column_ptr->voxels[voxel_idx_x][voxel_idx_y][i];
+      // Get the correct voxel for this index.
+      if (site_functor.isVoxelObserved(*voxel_ptr)) {
+        observed[voxel_idx_x][voxel_idx_y] = true;
+        const bool is_freespace = isVoxelFreespace(
+            freespace_block_ptr, dim3(voxel_idx_x, voxel_idx_y, i));
+        site_functor.updateSquashedExtremumAtomic(
+            *voxel_ptr, is_freespace, &voxel_slice[voxel_idx_x][voxel_idx_y]);
+      }
+    }
+  }
+
+  // sync threads across everyone trying to update this voxel
+  __syncthreads();
+
+  // Ok now we compare the new and old values and decide what to output.
+  // Do this once for each voxel in the x/y plane.
+  if (vertical_block_idx_offset == 0) {
+    // Get the correct voxel for this index.
+    const VoxelType* voxel_ptr = &voxel_slice[voxel_idx_x][voxel_idx_y];
+    EsdfVoxel* esdf_voxel_ptr =
+        &esdf_slice_block_ptr
+             ->voxels[voxel_idx_x][voxel_idx_y][output_slice_voxel_index_z];
+
+    const bool is_observed = observed[voxel_idx_x][voxel_idx_y];
+    // NOTE(alexmillane): In the 2D case we handle freespace in the the
+    // squashing so we force the freespace flag to false for the update
+    // function
+    constexpr bool kNotFreespace = false;
+
+    // Update the ESDF voxel based on changes to the input layer.
+    updateEsdfVoxelToChanges(voxel_ptr, is_observed, kNotFreespace,
+                             site_functor, max_squared_esdf_distance_vox,
+                             esdf_voxel_ptr, &cleared, &updated);
+  }
+
+  __syncthreads();
+  // Now output the updated and cleared.
+  // Do this once for each block in the slice.
+  if (voxel_idx_x == 0 && voxel_idx_y == 0 && vertical_block_idx_offset == 0) {
+    if (updated) {
+      updated_vec[atomicAdd(updated_vec_size, 1)] = esdf_slice_block_index;
+    }
+    if (cleared) {
+      to_clear_vec[atomicAdd(to_clear_vec_size, 1)] = esdf_slice_block_index;
+    }
+  }
 }
 
-template <typename LayerType>
-void EsdfIntegrator::markSitesInSlice(const LayerType& input_layer,
-                                      const std::vector<Index3D>& block_indices,
-                                      float min_z, float max_z, float output_z,
-                                      const FreespaceLayer* freespace_layer_ptr,
-                                      EsdfLayer* esdf_layer,
-                                      device_vector<Index3D>* updated_blocks,
-                                      device_vector<Index3D>* cleared_blocks) {
+ConstantZColumnBoundsGetter sliceDescriptionToSlicer(
+    const ConstantZSliceDescription& slice_spec, const float block_size) {
+  return ConstantZColumnBoundsGetter(slice_spec.z_min_m, slice_spec.z_max_m,
+                                     block_size);
+}
+
+PlanarSliceColumnBoundsGetter sliceDescriptionToSlicer(
+    const PlanarSliceDescription& slice_spec, const float block_size) {
+  CHECK_GE(slice_spec.slice_height_above_plane_m, 0.0f);
+  CHECK_GT(slice_spec.slice_height_thickness_m, 0.0f);
+  return PlanarSliceColumnBoundsGetter(
+      slice_spec.ground_plane, slice_spec.slice_height_above_plane_m,
+      slice_spec.slice_height_thickness_m, block_size);
+}
+
+template <typename LayerType, typename SliceDescriptionType>
+void EsdfIntegrator::markSitesInSlice(
+    const LayerType& input_layer, const std::vector<Index3D>& block_indices,
+    const SliceDescriptionType& slice_description,
+    const FreespaceLayer* freespace_layer_ptr, EsdfLayer* esdf_layer,
+    device_vector<Index3D>* updated_blocks,
+    device_vector<Index3D>* cleared_blocks) {
+  CHECK_NOTNULL(esdf_layer);
+  CHECK_NOTNULL(updated_blocks);
+  CHECK_NOTNULL(cleared_blocks);
   if (block_indices.empty()) {
     return;
   }
@@ -880,24 +950,21 @@ void EsdfIntegrator::markSitesInSlice(const LayerType& input_layer,
       max_esdf_distance_vox * max_esdf_distance_vox;
   constexpr int kVoxelsPerSide = EsdfBlock::kVoxelsPerSide;
 
-  // We are going to subsample the block_indices.
-  // We need to figure out all the output blocks, which will be a subset
-  // of the input blocks.
+  // Description of algorithm
+  // - Go over blocks to be updated and convert to set of blocks with x,y
+  //   indices the same, but the z indices fixed to the output height.
+  // - Allocate 2D blocks in outut ESDF layer
+  // [kernel] - BlockIdx - 1 per output block
+  //          - ThreadIdx - x,y - one per VoxelIdx
+  //          -             z - one per block in max z-block-range
+  // - Kernel squashes the map to a 2D slice of ESDF blocks
+  // - Updates the ESDF voxels in the slice according to changes in the
+  //   TSDF/occ.
 
-  // Find the minimum z-index that should be included in the slice
-  const auto [min_input_block_index_z, min_input_voxel_index_z] =
-      getBlockAndVoxelZIndexFromHeightInLayer(block_size, min_z);
-  // Find the maximum z-index that should be included in the slice
-  const auto [max_input_block_index_z, max_input_voxel_index_z] =
-      getBlockAndVoxelZIndexFromHeightInLayer(block_size, max_z);
-  // And figure out what the z-index on the output esdf slice is.
+  // Figure out what the z-(block/voxel)-index of the output esdf slice is.
   const auto [output_slice_block_index_z, output_slice_voxel_index_z] =
-      getBlockAndVoxelZIndexFromHeightInLayer(block_size, output_z);
-
-  // Figure out how many blocks we have in one vertical column (at least 1).
-  CHECK_GE(max_input_block_index_z, min_input_block_index_z);
-  int num_blocks_in_vertical_column =
-      max_input_block_index_z - min_input_block_index_z + 1;
+      getBlockAndVoxelIndexFrom1DPositionInLayer(block_size,
+                                                 slice_description.z_output_m);
 
   // Next get a set of all the valid output blocks:
   // - lying in between [z_min, z_max]
@@ -906,23 +973,20 @@ void EsdfIntegrator::markSitesInSlice(const LayerType& input_layer,
   //   set implementation is used)
   Index3DSet block_indices_in_output_slice_set;
   for (const Index3D& block_index : block_indices) {
-    if (block_index.z() >= min_input_block_index_z &&
-        block_index.z() <= max_input_block_index_z) {
-      block_indices_in_output_slice_set.insert(Index3D(
-          block_index.x(), block_index.y(), output_slice_block_index_z));
-    }
+    block_indices_in_output_slice_set.insert(
+        Index3D(block_index.x(), block_index.y(), output_slice_block_index_z));
   }
 
   // Resize everything to the final size.
-  size_t num_blocks_in_output_slice = block_indices_in_output_slice_set.size();
-  block_indices_host_.resize(num_blocks_in_output_slice);
-  updated_indices_device_.resizeAsync(num_blocks_in_output_slice,
-                                      *cuda_stream_);
-  to_clear_indices_device_.resizeAsync(num_blocks_in_output_slice,
-                                       *cuda_stream_);
+  const size_t num_blocks_in_output_slice =
+      block_indices_in_output_slice_set.size();
+  block_indices_host_.resizeAsync(num_blocks_in_output_slice, *cuda_stream_);
+  updated_blocks->resizeAsync(num_blocks_in_output_slice, *cuda_stream_);
+  cleared_blocks->resizeAsync(num_blocks_in_output_slice, *cuda_stream_);
   if (num_blocks_in_output_slice == 0) {
     return;
   }
+  cuda_stream_->synchronize();
 
   // Convert the block set to a vector and allocate output esdf blocks.
   size_t i = 0;
@@ -935,37 +999,33 @@ void EsdfIntegrator::markSitesInSlice(const LayerType& input_layer,
   block_indices_device_.copyFromAsync(block_indices_host_, *cuda_stream_);
 
   // Reset the counters.
-  if (updated_counter_device_ == nullptr || updated_counter_host_ == nullptr) {
-    updated_counter_device_ = make_unified<int>(MemoryType::kDevice);
-    updated_counter_host_ = make_unified<int>(MemoryType::kHost);
-  }
   updated_counter_device_.setZeroAsync(*cuda_stream_);
-  if (cleared_counter_device_ == nullptr || cleared_counter_host_ == nullptr) {
-    cleared_counter_device_ = make_unified<int>(MemoryType::kDevice);
-    cleared_counter_host_ = make_unified<int>(MemoryType::kHost);
-  }
   cleared_counter_device_.setZeroAsync(*cuda_stream_);
 
   using BlockType = typename LayerType::BlockType;
 
   // Get the GPU hash of both the TSDF and the ESDF.
-  GPULayerView<EsdfBlock> esdf_layer_view =
-      esdf_layer->getGpuLayerViewAsync(*cuda_stream_);
-  GPULayerView<BlockType> tsdf_layer_view =
-      input_layer.getGpuLayerViewAsync(*cuda_stream_);
+  GPULayerView<EsdfBlock>& esdf_layer_view =
+      esdf_layer->getGpuLayerView(*cuda_stream_);
+  GPULayerView<BlockType>& tsdf_layer_view =
+      input_layer.getGpuLayerView(*cuda_stream_);
 
   Index3DDeviceHashMapType<FreespaceBlock> freespace_hash_map;
   if (freespace_layer_ptr != nullptr) {
     freespace_hash_map =
-        freespace_layer_ptr->getGpuLayerViewAsync(*cuda_stream_)
-            .getHash()
-            .impl_;
+        freespace_layer_ptr->getGpuLayerView(*cuda_stream_).getHash().impl_;
   }
 
   // Get the marking functions for this layer type
   auto site_functor = getSiteFunctor(input_layer);
 
+  // Get the slicer for this slicing type
+  auto slicer =
+      sliceDescriptionToSlicer(slice_description, input_layer.block_size());
+
   // Figure out the size of the kernel.
+  const int num_blocks_in_vertical_column =
+      slicer.num_blocks_in_vertical_column();
   int dim_block = num_blocks_in_output_slice;
   dim3 dim_threads(kVoxelsPerSide, kVoxelsPerSide,
                    num_blocks_in_vertical_column);
@@ -978,11 +1038,9 @@ void EsdfIntegrator::markSitesInSlice(const LayerType& input_layer,
           esdf_layer_view.getHash().impl_,  // NOLINT
           site_functor,                     // NOLINT
           max_squared_esdf_distance_vox,    // NOLINT
-          min_input_block_index_z,          // NOLINT
-          min_input_voxel_index_z,          // NOLINT
-          max_input_voxel_index_z,          // NOLINT
           output_slice_voxel_index_z,       // NOLINT
           input_layer.block_size(),         // NOLINT
+          slicer,                           // NOLINT
           updated_blocks->data(),           // NOLINT
           updated_counter_device_.get(),    // NOLINT
           cleared_blocks->data(),           // NOLINT
@@ -993,9 +1051,11 @@ void EsdfIntegrator::markSitesInSlice(const LayerType& input_layer,
   updated_counter_device_.copyToAsync(updated_counter_host_, *cuda_stream_);
   cleared_counter_device_.copyToAsync(cleared_counter_host_, *cuda_stream_);
   cuda_stream_->synchronize();
+  checkCudaErrors(cudaPeekAtLastError());
 
-  updated_blocks->resize(*updated_counter_host_);
-  cleared_blocks->resize(*cleared_counter_host_);
+  updated_blocks->resizeAsync(*updated_counter_host_, *cuda_stream_);
+  cleared_blocks->resizeAsync(*cleared_counter_host_, *cuda_stream_);
+  cuda_stream_->synchronize();
   pack_out_timer.Stop();
 }
 
@@ -1228,31 +1288,31 @@ void EsdfIntegrator::sortAndTakeUniqueIndices(
   // block_indices->size() < kNumThreads * kNumItemsPerThread
   sortUniqueKernel<kNumThreads, kNumItemsPerThread>
       <<<1, kNumThreads, 0, *cuda_stream_>>>(
-          block_indices->data(),    // NOLINT
-          counter_buffer_device_);  // 0th element has block_indices->size(),
-                                    // and the 1st element is for the new size
+          block_indices->data(),  // NOLINT
+          counter_buffer_device_
+              .data());  // 0th element has block_indices->size(),
+                         // and the 1st element is for the new size
 
-  cudaMemcpyAsync(counter_buffer_host_, counter_buffer_device_, sizeof(int) * 2,
-                  cudaMemcpyDeviceToHost, *cuda_stream_);
+  counter_buffer_host_.copyFromAsync(counter_buffer_device_, *cuda_stream_);
   cuda_stream_->synchronize();
 
-  if (counter_buffer_host_[1] != -1) {  // assumtion was true
-    block_indices->resize(counter_buffer_host_[1]);
+  if (counter_buffer_host_[1] != -1) {  // assumption was true
+    block_indices->resizeAsync(counter_buffer_host_[1], *cuda_stream_);
   } else {
     // block_indices->size() >= kNumThreads * kNumItemsPerThread
-    block_indices->resize(counter_buffer_host_[0]);
+    block_indices->resizeAsync(counter_buffer_host_[0], *cuda_stream_);
     if (counter_buffer_host_[0] == 0) {
       return;
     }
-    LOG(INFO) << "Vector too big to sort. Falling back to thrust.";
     // sort vertices to bring duplicates together
-    thrust::sort(thrust::device, block_indices->begin(), block_indices->end(),
-                 VectorCompare<Index3D>());
+    thrust::sort(thrust::device.on(*cuda_stream_), block_indices->begin(),
+                 block_indices->end(), VectorCompare<Index3D>());
 
     // Find unique vertices and erase redundancies. The iterator will point to
     // the new last index.
-    auto iterator = thrust::unique(thrust::device, block_indices->begin(),
-                                   block_indices->end());
+    auto iterator =
+        thrust::unique(thrust::device.on(*cuda_stream_), block_indices->begin(),
+                       block_indices->end());
 
     // Figure out the new size.
     size_t new_size = iterator - block_indices->begin();
@@ -1277,15 +1337,9 @@ void EsdfIntegrator::updateNeighborBands(
   updated_block_indices->resizeAsync(
       block_indices->size() * kUpdatedBlockMultiple, *cuda_stream_);
 
-  // Create an output variable.
-  if (updated_counter_device_ == nullptr || updated_counter_host_ == nullptr) {
-    updated_counter_device_ = make_unified<int>(MemoryType::kDevice);
-    updated_counter_host_ = make_unified<int>(MemoryType::kHost);
-  }
-
   timing::Timer gpu_view("esdf/integrate/compute/neighbor_bands/gpu_view");
-  GPULayerView<EsdfBlock> gpu_layer_view =
-      esdf_layer->getGpuLayerViewAsync(*cuda_stream_);
+  GPULayerView<EsdfBlock>& gpu_layer_view =
+      esdf_layer->getGpuLayerView(*cuda_stream_);
   gpu_view.Stop();
 
   // Call the kernel.
@@ -1297,11 +1351,6 @@ void EsdfIntegrator::updateNeighborBands(
   //     The updateNeighborBandsKernel will write to first N values and
   //     the size of the buffer is stored in a GPU variable that's accessed by
   //     the a kernel launched from the sortAndTakeUniqueIndices function.
-
-  if (counter_buffer_device_ == nullptr || counter_buffer_host_ == nullptr) {
-    cudaMalloc(&counter_buffer_device_, sizeof(int) * 2);
-    counter_buffer_host_ = (int*)malloc(sizeof(int) * 2);
-  }
 
   int temp_storage_size =
       block_indices->size() *
@@ -1316,7 +1365,7 @@ void EsdfIntegrator::updateNeighborBands(
       gpu_layer_view.getHash().impl_,        // NOLINT
       block_indices->data(),                 // NOLINT
       temp_block_pointers_.data(),
-      counter_buffer_device_);  // to initalize it; merged operation
+      counter_buffer_device_.data());  // to initalize it; merged operation
 
   for (int i = 0; i < kNumNeighbors; i++) {
     updateNeighborBandsKernel<<<dim_block, dim_threads, 0, *cuda_stream_>>>(
@@ -1326,7 +1375,7 @@ void EsdfIntegrator::updateNeighborBands(
         block_indices->data(),           // NOLINT
         temp_block_pointers_.data(),
         updated_block_indices->data(),  // NOLINT
-        counter_buffer_device_);
+        counter_buffer_device_.data());
   }
   checkCudaErrors(cudaPeekAtLastError());
   // Avoid GPU-Host communication for updated_block_indices.
@@ -1393,8 +1442,8 @@ void EsdfIntegrator::sweepBlockBandAsync(device_vector<Index3D>* block_indices,
   constexpr int kVoxelsPerSide = VoxelBlock<bool>::kVoxelsPerSide;
   const int num_blocks = block_indices->size();
 
-  GPULayerView<EsdfBlock> gpu_layer_view =
-      esdf_layer->getGpuLayerViewAsync(*cuda_stream_);
+  GPULayerView<EsdfBlock>& gpu_layer_view =
+      esdf_layer->getGpuLayerView(*cuda_stream_);
 
   // Call the kernel.
   // We do 2-dimensional sweeps in this kernel. Each thread does 3 sweeps.
@@ -1562,8 +1611,8 @@ void EsdfIntegrator::clearAllInvalid(
   temp_indices_device_.copyFromAsync(temp_indices_host_, *cuda_stream_);
 
   // Get the hash map of the whole ESDF map.
-  GPULayerView<EsdfBlock> gpu_layer_view =
-      esdf_layer->getGpuLayerViewAsync(*cuda_stream_);
+  GPULayerView<EsdfBlock>& gpu_layer_view =
+      esdf_layer->getGpuLayerView(*cuda_stream_);
 
   // Create an output variable.
   if (updated_counter_device_ == nullptr || updated_counter_host_ == nullptr) {
@@ -1591,9 +1640,9 @@ void EsdfIntegrator::clearAllInvalid(
     updated_counter_device_.copyToAsync(updated_counter_host_, *cuda_stream_);
     cuda_stream_->synchronize();
 
-    updated_blocks->resize(*updated_counter_host_);
+    updated_blocks->resizeAsync(*updated_counter_host_, *cuda_stream_);
   } else {
-    updated_blocks->resize(0);
+    updated_blocks->clearNoDeallocate();
   }
 }
 

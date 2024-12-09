@@ -20,6 +20,7 @@ limitations under the License.
 #include "nvblox/map/common_names.h"
 #include "nvblox/map/layer.h"
 #include "nvblox/map/voxels.h"
+#include "nvblox/tests/gpu_layer_utils.h"
 
 #include "nvblox/gpu_hash/gpu_layer_view.h"
 
@@ -30,6 +31,9 @@ limitations under the License.
 #include "nvblox/tests/utils.h"
 
 using namespace nvblox;
+
+// We need a non-null pointer when inserting into the hashmap.
+TsdfBlock* kDummyPtr = reinterpret_cast<TsdfBlock*>(0x08000000);
 
 TEST(GpuHashTest, CopyOverLayer) {
   // Indices to insert in the layer
@@ -47,7 +51,8 @@ TEST(GpuHashTest, CopyOverLayer) {
                 });
 
   // Copy block hash to GPU
-  GPULayerView<TsdfBlock> gpu_layer = tsdf_layer.getGpuLayerView();
+  GPULayerView<TsdfBlock>& gpu_layer =
+      tsdf_layer.getGpuLayerView(CudaStreamOwning());
 
   // Search for indices on the GPU
   block_indices.push_back({3, 0, 0});
@@ -92,20 +97,22 @@ TEST(GpuHashTest, SphereSceneAccessTest) {
   std::vector<TsdfVoxel> cpu_lookup_voxels;
   cpu_lookup_voxels.reserve(p_L_vec.size());
   for (const Vector3f& p_L : p_L_vec) {
-    // TODO(alexmillane): Let's also add this as a member function
-    const TsdfVoxel* voxel_ptr;
+    // TOnqDO(alexmillane): Let's also add this as a member function
+    const TsdfVoxel* voxel_ptr = nullptr;
     EXPECT_TRUE(getVoxelAtPosition(tsdf_layer, p_L, &voxel_ptr));
     cpu_lookup_voxels.push_back(*voxel_ptr);
   }
 
+  test_utils::checkGpuAndCpuHashesEqual(tsdf_layer);
   // CPU -> GPU
-  GPULayerView<TsdfBlock> gpu_layer = tsdf_layer.getGpuLayerView();
+  GPULayerView<TsdfBlock>& gpu_layer =
+      tsdf_layer.getGpuLayerView(CudaStreamOwning());
 
   // Lookup voxels (GPU)
   host_vector<TsdfVoxel> gpu_lookup_voxels;
   host_vector<bool> flags;
   test_utils::getVoxelsAtPositionsOnGPU(gpu_layer, p_L_vec, &gpu_lookup_voxels,
-                                        &flags);
+                                        &flags, tsdf_layer.block_size());
 
   std::for_each(flags.begin(), flags.end(),
                 [](bool flag) { EXPECT_TRUE(flag); });
@@ -124,72 +131,91 @@ TEST(GpuHashTest, SphereSceneAccessTest) {
                                                 bounds_max.array() + 5.0);
   });
   test_utils::getVoxelsAtPositionsOnGPU(gpu_layer, p_L_vec, &gpu_lookup_voxels,
-                                        &flags);
+                                        &flags, tsdf_layer.block_size());
   std::for_each(flags.begin(), flags.end(),
                 [](bool flag) { EXPECT_FALSE(flag); });
 }
 
 TEST(GpuHashTest, ResizeTest) {
-  // Indices to insert in the layer
-  std::vector<Index3D> block_indices;
-  block_indices.push_back({0, 0, 0});
-  block_indices.push_back({1, 0, 0});
-  block_indices.push_back({2, 0, 0});
-
-  // Create a layer with a two blocks
-  const float voxel_size = 0.1f;
-  TsdfLayer tsdf_layer(voxel_size, MemoryType::kUnified);
-  std::for_each(block_indices.begin(), block_indices.end(),
-                [&tsdf_layer](const Index3D& idx) {
-                  tsdf_layer.allocateBlockAtIndex(idx);
-                });
-
-  // Push the layer into a undersized layer view and check it expands to fit.
-  GPULayerView<TsdfBlock> gpu_layer_view(1);
-  gpu_layer_view.reset(&tsdf_layer);
-  EXPECT_GT(gpu_layer_view.size(), 1);
+  // Create a blocks to insert
+  constexpr int kNumblocks = 1000;
+  std::vector<thrust::pair<Index3D, TsdfBlock*>> blocks;
+  for (int i = 0; i < kNumblocks; ++i) {
+    blocks.emplace_back(thrust::make_pair(Index3D{i, 0, 0}, kDummyPtr));
+  }
+  // Push the layer into a undersized layer view and check that it expands to
+  // fit.
+  constexpr int kInitialCapacity = 1;
+  GPULayerView<TsdfBlock> gpu_layer_view(kInitialCapacity);
+  gpu_layer_view.insertBlocksAsync(blocks, CudaStreamOwning());
+  CHECK_EQ(gpu_layer_view.size(), blocks.size());
+  EXPECT_EQ(gpu_layer_view.size(), kNumblocks);
 }
 
+// Insert one block at a time and check that we never exceed the load balance
 TEST(GpuHashTest, LoadFactorTest) {
   // Create a layer with 1000 blocks
-  constexpr int num_blocks = 1000;
-  std::vector<Index3D> block_indices;
-  for (int i = 0; i < num_blocks; i++) {
-    block_indices.push_back({i, 0, 0});
+  constexpr size_t kNumBlocks = 1000;
+  constexpr int kInitialCapacity = 1;
+  GPULayerView<TsdfBlock> gpu_layer(kInitialCapacity);
+
+  for (size_t num_inserted = 0; num_inserted < kNumBlocks; ++num_inserted) {
+    const int capacity_before = gpu_layer.capacity();
+    const float load_factor =
+        static_cast<float>(num_inserted) / capacity_before;
+
+    CHECK_EQ(num_inserted, gpu_layer.size());
+
+    CHECK_EQ(load_factor, gpu_layer.loadFactor());
+    CHECK_LE(load_factor, gpu_layer.max_load_factor());
+
+    gpu_layer.insertBlocksAsync(
+        {thrust::make_pair(Index3D{static_cast<int>(num_inserted), 0, 0},
+                           kDummyPtr)},
+        CudaStreamOwning());
+
+    gpu_layer.flushCache(CudaStreamOwning());
+  }
+}
+
+std::vector<thrust::pair<Index3D, TsdfBlock*>> getBlocks(const int num,
+                                                         const int start_idx) {
+  std::vector<thrust::pair<Index3D, TsdfBlock*>> blocks;
+  for (int i = 0; i < num; ++i) {
+    blocks.emplace_back(
+        thrust::make_pair(Index3D{start_idx + i, 0, 0}, kDummyPtr));
+  }
+  return blocks;
+}
+
+TEST(GpuHashTest, InsertAndRemove) {
+  constexpr int kNumblocks = 1000;
+  std::vector<thrust::pair<Index3D, TsdfBlock*>> blocks_to_insert;
+  std::vector<Index3D> blocks_to_remove;
+  for (int i = 0; i < kNumblocks; ++i) {
+    blocks_to_insert.emplace_back(
+        thrust::make_pair(Index3D{i, 0, 0}, kDummyPtr));
+    if (i % 2 == 0) {
+      blocks_to_remove.push_back(Index3D{i, 0, 0});
+    }
   }
 
-  // Create a layer
-  const float voxel_size = 0.1f;
-  TsdfLayer tsdf_layer(voxel_size, MemoryType::kUnified);
-  std::for_each(block_indices.begin(), block_indices.end(),
-                [&tsdf_layer](const Index3D& idx) {
-                  tsdf_layer.allocateBlockAtIndex(idx);
-                });
+  GPULayerView<TsdfBlock> gpu_layer(10);
+  CHECK_EQ(gpu_layer.size(), 0U);
 
-  // Allocate a GPULayerView that can *just* hold the layer without breaking the
-  // load rate.
-  GPULayerView<TsdfBlock> gpu_layer(1);
-  const size_t initial_gpu_layer_size =
-      std::ceil(static_cast<float>(num_blocks) / gpu_layer.max_load_factor());
-  gpu_layer = GPULayerView<TsdfBlock>(initial_gpu_layer_size);
+  // Insert and check size
+  gpu_layer.insertBlocksAsync(blocks_to_insert, CudaStreamOwning());
+  CHECK_EQ(gpu_layer.size(), blocks_to_insert.size());
 
-  // Send in the blocks
-  gpu_layer.reset(&tsdf_layer);
+  // Flushing the cache shouldn't change the size
+  gpu_layer.flushCache(CudaStreamOwning());
+  CHECK_EQ(gpu_layer.size(), blocks_to_insert.size());
 
-  // Check it hasn't expanded
-  EXPECT_EQ(gpu_layer.size(), initial_gpu_layer_size);
-
-  // Add another block
-  tsdf_layer.allocateBlockAtIndex({0, 0, 1});
-
-  // Regenerate the layer view
-  gpu_layer.reset(&tsdf_layer);
-
-  // Check it's expanded (by the right amount)
-  EXPECT_GT(gpu_layer.size(), initial_gpu_layer_size);
-  EXPECT_NEAR(static_cast<float>(gpu_layer.size()) /
-                  static_cast<float>(initial_gpu_layer_size),
-              gpu_layer.size_expansion_factor(), 0.01);
+  // Remove some blocks
+  gpu_layer.removeBlocksAsync(blocks_to_remove, CudaStreamOwning());
+  CHECK_EQ(gpu_layer.size(), blocks_to_insert.size() - blocks_to_remove.size());
+  gpu_layer.flushCache(CudaStreamOwning());
+  CHECK_EQ(gpu_layer.size(), blocks_to_insert.size() - blocks_to_remove.size());
 }
 
 int main(int argc, char** argv) {

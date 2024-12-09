@@ -37,7 +37,7 @@ struct MeshBlock {
   /// Create a mesh block of the specified memory type.
   MeshBlock(MemoryType memory_type = MemoryType::kDevice);
 
-  void copyFromAsync(const MeshBlock& other, const CudaStream cuda_stream);
+  void copyFromAsync(const MeshBlock& other, const CudaStream& cuda_stream);
   void copyFrom(const MeshBlock& other);
   // Mesh Data
   // These unified vectors contain the mesh data for this block. Note that
@@ -57,12 +57,9 @@ struct MeshBlock {
   /// Capacity (allocated size) of the vertices vector.
   size_t capacity() const;
 
-  /// The number of bytes in this block
-  size_t sizeInBytes() const;
-
   /// Resize colors/intensities such that:
   /// `colors.size()/intensities.size() == vertices.size()`
-  void expandColorsToMatchVertices();
+  void expandColorsToMatchVerticesAsync(const CudaStream& cuda_stream);
 
   /// Note(alexmillane): Memory type ignored, MeshBlocks live in CPU memory.
   static Ptr allocate(MemoryType memory_type);
@@ -75,6 +72,9 @@ struct MeshBlock {
   /// nothing.
   static void initAsync(MeshBlock*, const MemoryType, const CudaStream&) {}
 };
+
+/// The number of bytes in a mesh block
+size_t sizeInBytes(const MeshBlock* mesh_block);
 
 /// Helper struct for mesh blocks on CUDA.
 /// NOTE: We need this because we can't pass MeshBlock to kernel functions
@@ -94,8 +94,8 @@ struct CudaMeshBlock {
 /// Specialization of BlockLayer copyFrom just for MeshBlocks
 /// Necessary since MeshBlock::Ptr is std::shared_ptr instead of unified_ptr
 template <>
-inline void BlockLayer<MeshBlock>::copyFromAsync(const BlockLayer& other,
-                                                 const CudaStream cuda_stream) {
+inline void BlockLayer<MeshBlock>::copyFromAsync(
+    const BlockLayer& other, const CudaStream& cuda_stream) {
   LOG(INFO) << "Deep copy of Mesh BlockLayer containing "
             << other.numAllocatedBlocks() << " blocks.";
 

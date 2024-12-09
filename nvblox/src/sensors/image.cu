@@ -63,15 +63,16 @@ uint8_t minGPU(const MonoImage& image, const CudaStream& cuda_stream) {
   return minGPUTemplate(image, cuda_stream);
 }
 
-std::pair<float, float> minmaxGPU(const DepthImage& image,
-                                  const CudaStream& cuda_stream) {
+void minmaxGPU(const DepthImageConstView& image, float* min, float* max,
+               const CudaStream& cuda_stream) {
   // Wrap our memory and reduce using thrust
   const thrust::device_ptr<const float> dev_ptr(image.dataConstPtr());
   const auto minmax_elem =
       thrust::minmax_element(thrust::device.on(cuda_stream), dev_ptr,
                              dev_ptr + (image.rows() * image.cols()));
   cuda_stream.synchronize();
-  return {*minmax_elem.first, *minmax_elem.second};
+  *min = *minmax_elem.first;
+  *max = *minmax_elem.second;
 }
 
 struct max_with_constant_functor {
@@ -316,6 +317,89 @@ void castTemplateAsync(const InputImageType& image_in,
                     dev_input_ptr + (image_in.rows() * image_in.cols()),
                     dev_output_ptr,
                     cast_functor<OutputElementType, InputElementType>());
+}
+
+// Copy every second pixel from image_in to image_out
+//
+// @param image_in Input image
+// @param image_out Output image. Must be half the size of image_in (rounding
+// downwards)
+//  n_threads: <= image_out.cols()
+//  n_blocks: = image_out.rows()
+__global__ void naiveDownscaleKernel(MonoImageConstView image_in,
+                                     const int factor,
+                                     MonoImageView image_out) {
+  assert(image_out.rows() == image_in.rows() / factor);
+  assert(image_out.cols() == image_in.cols() / factor);
+
+  const int row = blockIdx.x;
+  const int col_start = threadIdx.x;
+
+  if (row < image_out.rows() && col_start < image_out.cols()) {
+    for (int col = col_start; col < image_out.cols(); col += blockDim.x) {
+      image_out(row, col) = image_in(row * factor, col * factor);
+    }
+  }
+}
+
+void naiveDownscaleGPUAsync(const MonoImage& image_in, const int factor,
+                            MonoImage* image_out,
+                            const CudaStream& cuda_stream) {
+  const int new_rows = image_in.rows() / factor;
+  const int new_cols = image_in.cols() / factor;
+
+  // Only non-strided data supported
+  CHECK_EQ(image_in.stride_num_elements(), image_in.cols());
+  CHECK_EQ(image_out->stride_num_elements(), image_out->cols());
+  CHECK_GT(new_rows, 0);
+  CHECK_GT(new_cols, 0);
+
+  image_out->resizeAsync(new_rows, new_cols, cuda_stream);
+
+  constexpr int kMaxNumThreadsPerBlock = 1024;
+  const int num_blocks = new_rows;
+  const int num_threads_per_block =
+      std::min(kMaxNumThreadsPerBlock, image_out->cols());
+
+  naiveDownscaleKernel<<<num_blocks, num_threads_per_block, 0, cuda_stream>>>(
+      image_in, factor, *image_out);
+}
+
+__global__ void upscaleKernel(MonoImageConstView image_in, const int factor,
+                              MonoImageView image_out) {
+  assert(image_out.rows() == image_in.rows() * factor);
+  assert(image_out.cols() == image_in.cols() * factor);
+
+  const int row = blockIdx.x;
+  const int col_start = threadIdx.x;
+
+  if (row < image_out.rows() && col_start < image_out.cols()) {
+    for (int col = col_start; col < image_out.cols(); col += blockDim.x) {
+      image_out(row, col) = image_in(row / factor, col / factor);
+    }
+  }
+}
+
+void upscaleGPUAsync(const MonoImage& image_in, const int factor,
+                     MonoImage* image_out, const CudaStream& cuda_stream) {
+  const int new_rows = image_in.rows() * factor;
+  const int new_cols = image_in.cols() * factor;
+
+  // Only non-strided data supported
+  CHECK_EQ(image_in.stride_num_elements(), image_in.cols());
+  CHECK_EQ(image_out->stride_num_elements(), image_out->cols());
+  CHECK_GT(new_rows, 0);
+  CHECK_GT(new_cols, 0);
+
+  image_out->resizeAsync(new_rows, new_cols, cuda_stream);
+
+  constexpr int kMaxNumThreadsPerBlock = 1024;
+  const int num_blocks = new_rows;
+  const int num_threads_per_block =
+      std::min(kMaxNumThreadsPerBlock, image_out->cols());
+
+  upscaleKernel<<<num_blocks, num_threads_per_block, 0, cuda_stream>>>(
+      image_in, factor, *image_out);
 }
 
 void castGPUAsync(const DepthImage& image_in, MonoImage* image_out_ptr,

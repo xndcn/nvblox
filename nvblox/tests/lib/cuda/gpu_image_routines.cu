@@ -22,15 +22,17 @@ namespace nvblox {
 namespace test_utils {
 
 template <typename ElementType>
-__global__ void setImageConstantKernel(ElementType* image, const int rows,
-                                       const int cols, ElementType value) {
+__global__ void setImageConstantKernel(ImageView<ElementType> image_view,
+                                       ElementType value) {
   // NOTE(alexmillane): Memory access is fully coallesed because neighbouring
   // threads in the grid x dimension, access neighbouring memory elements
   // (row-major images).
   const int row_idx = blockIdx.x * blockDim.x + threadIdx.x;
   const int col_idx = blockIdx.y * blockDim.y + threadIdx.y;
-  if (col_idx < cols && row_idx < rows) {
-    image::access(row_idx, col_idx, cols, image) = value;
+  if (col_idx < image_view.cols() && row_idx < image_view.rows()) {
+    for (int c = 0; c < image_view.num_elements_per_pixel(); ++c) {
+      image_view(row_idx, col_idx, c) = value;
+    }
   }
 }
 
@@ -44,7 +46,7 @@ void setImageConstantOnGpuTemplate(const ElementType value,
   dim3 gridShape((image_ptr->rows() / kThreadsPerBlockInEachDimension) + 1,
                  (image_ptr->cols() / kThreadsPerBlockInEachDimension) + 1);
   setImageConstantKernel<<<gridShape, blockShape>>>(
-      image_ptr->dataPtr(), image_ptr->rows(), image_ptr->cols(), value);
+      ImageView<ElementType>(*image_ptr), value);
   checkCudaErrors(cudaGetLastError());
   checkCudaErrors(cudaDeviceSynchronize());
 }

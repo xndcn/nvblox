@@ -23,15 +23,8 @@ limitations under the License.
 namespace nvblox {
 
 template <typename BlockType>
-GPULayerView<BlockType>::GPULayerView(LayerType* layer_ptr)
-    : gpu_hash_ptr_(std::make_shared<GPUHashImpl<BlockType>>()) {
-  reset(layer_ptr);
-}
-
-template <typename BlockType>
-GPULayerView<BlockType>::GPULayerView(size_t max_num_blocks)
-    : gpu_hash_ptr_(std::make_shared<GPUHashImpl<BlockType>>(max_num_blocks)) {
-  // The GPUHashImpl takes care of allocating GPU memory.
+GPULayerView<BlockType>::GPULayerView(size_t max_num_blocks) {
+  reset(max_num_blocks, CudaStreamOwning());
 }
 
 template <typename BlockType>
@@ -40,108 +33,172 @@ GPULayerView<BlockType>::~GPULayerView() {
 }
 
 template <typename BlockType>
-GPULayerView<BlockType>::GPULayerView(const GPULayerView<BlockType>& other)
-    : block_size_(other.block_size_), gpu_hash_ptr_(other.gpu_hash_ptr_) {}
+void GPULayerView<BlockType>::insertBlocksAsync(
+    const std::vector<thrust::pair<Index3D, BlockType*>>& blocks_to_insert,
+    const CudaStream& cuda_stream) {
+  // By design, we do not allow the insertion and removal caches to both contain
+  // elements at the same time. This is to avoid conflicts, e.g. when the same
+  // index appear in both insertion and removal cache. We therefore flush the
+  // insertion cache before inserting.
+  flushRemovalCache(cuda_stream);
 
-template <typename BlockType>
-GPULayerView<BlockType>::GPULayerView(GPULayerView<BlockType>&& other)
-    : block_size_(other.block_size_),
-      gpu_hash_ptr_(std::move(other.gpu_hash_ptr_)) {}
-
-template <typename BlockType>
-GPULayerView<BlockType>& GPULayerView<BlockType>::operator=(
-    const GPULayerView<BlockType>& other) {
-  block_size_ = other.block_size_;
-  gpu_hash_ptr_ = other.gpu_hash_ptr_;
-  return *this;
+  insertion_cache_.reserve(insertion_cache_.size() + blocks_to_insert.size());
+  for (const auto& item : blocks_to_insert) {
+    insertion_cache_.push_back(item);
+  }
+  size_including_cache_ += blocks_to_insert.size();
 }
 
 template <typename BlockType>
-GPULayerView<BlockType>& GPULayerView<BlockType>::operator=(
-    GPULayerView<BlockType>&& other) {
-  block_size_ = other.block_size_;
-  gpu_hash_ptr_ = std::move(other.gpu_hash_ptr_);
-  return *this;
+void GPULayerView<BlockType>::insertBlockAsync(
+    const thrust::pair<Index3D, BlockType*>& block_to_insert,
+    const CudaStream& cuda_stream) {
+  flushRemovalCache(cuda_stream);
+  insertion_cache_.push_back(block_to_insert);
+  ++size_including_cache_;
+}
+template <typename BlockType>
+void GPULayerView<BlockType>::flushCache(const CudaStream& cuda_stream) {
+  CHECK(insertion_cache_.empty() || removal_cache_.empty());
+
+  flushInsertionCache(cuda_stream);
+  flushRemovalCache(cuda_stream);
+
+  // Note(dtingdahl): The currently used gpu-hash backend does not support
+  // asynchronous insertion. We stil add an explicit sync here to avoid
+  // surprises if this behavior changes in the future.
+  cuda_stream.synchronize();
 }
 
 template <typename BlockType>
-void GPULayerView<BlockType>::reset(LayerType* layer_ptr) {
-  reset(layer_ptr, CudaStreamOwning());
+float GPULayerView<BlockType>::loadFactor() {
+  return static_cast<float>(size_including_cache_) /
+         gpu_hash_ptr_->max_num_blocks_;
 }
 
 template <typename BlockType>
-void GPULayerView<BlockType>::reset(LayerType* layer_ptr,
-                                    const CudaStream& cuda_stream) {
-  CHECK_NOTNULL(layer_ptr);
-  timing::Timer timer("gpu_hash/transfer");
-
-  // Allocate gpu hash if not allocated already
-  if (!gpu_hash_ptr_) {
-    gpu_hash_ptr_ = std::make_shared<GPUHashImpl<BlockType>>(
-        layer_ptr->numAllocatedBlocks() * size_expansion_factor_);
+void GPULayerView<BlockType>::flushInsertionCache(
+    const CudaStream& cuda_stream) {
+  if (insertion_cache_.empty()) {
+    return;
   }
 
-  // Check the load factor and increase the size if required.
-  const float current_load_factor =
-      static_cast<float>(layer_ptr->numAllocatedBlocks()) /
-      static_cast<float>(gpu_hash_ptr_->max_num_blocks_);
-  if (current_load_factor > max_load_factor_) {
-    const size_t new_max_num_blocks = static_cast<size_t>(std::ceil(
-        size_expansion_factor_ * std::max(gpu_hash_ptr_->max_num_blocks_,
-                                          layer_ptr->numAllocatedBlocks())));
-    VLOG(3) << "Resizing from " << gpu_hash_ptr_->max_num_blocks_ << " to "
-            << new_max_num_blocks << " to accomodate "
-            << layer_ptr->numAllocatedBlocks();
-    reset(new_max_num_blocks);
-    CHECK_LT(layer_ptr->numAllocatedBlocks(), gpu_hash_ptr_->max_num_blocks_);
+  // Sanity check
+  CHECK_EQ(size_including_cache_,
+           gpu_hash_ptr_->impl_.size() + insertion_cache_.size());
+
+  timing::Timer timer("gpu_hash/flush_insertion_cache");
+  CHECK_NOTNULL(gpu_hash_ptr_);
+
+  if (loadFactor() > max_load_factor_) {
+    // Create a new hash with the required capacity
+    const size_t new_max_num_blocks = static_cast<size_t>(
+        std::ceil(size_expansion_factor_ *
+                  std::max<size_t>(size_including_cache_,
+                                   gpu_hash_ptr_->max_num_blocks_)));
+
+    LOG(INFO) << "Resizing GPU hash capacity from "
+              << gpu_hash_ptr_->max_num_blocks_ << " to " << new_max_num_blocks
+              << " in order to accomodate space for " << insertion_cache_.size()
+              << " new elements.";
+
+    auto new_gpu_hash = std::make_shared<GPUHashImpl<BlockType>>(
+        new_max_num_blocks, cuda_stream);
+
+    CHECK_GE(new_gpu_hash->max_num_blocks_, gpu_hash_ptr_->max_num_blocks_);
+
+    // Copy everything from the old hash into the new one and swap'em
+    new_gpu_hash->initializeFromAsync(*gpu_hash_ptr_, cuda_stream);
+    std::swap(gpu_hash_ptr_, new_gpu_hash);
   }
 
-  gpu_hash_ptr_->impl_.clear();
-
-  // This is necessary for bug-free operation, as clear does not sync
-  // afterwards.
-  // TODO(dtingdahl) Use newer version of stdgpu that support cuda streams to
-  // avoid device sync
-  checkCudaErrors(cudaDeviceSynchronize());
-  checkCudaErrors(cudaPeekAtLastError());
-  if (gpu_hash_ptr_->impl_.full()) {
-    LOG(ERROR) << "Have a full GPU hash! This is bad!";
-  }
-
-  block_size_ = layer_ptr->block_size();
-
-  // Arange blocks in continuous host memory for transfer
-  host_vector<IndexBlockPair<BlockType>> host_block_vector;
-  host_block_vector.reserve(layer_ptr->numAllocatedBlocks());
-  for (const auto& index : layer_ptr->getAllBlockIndices()) {
-    host_block_vector.push_back(IndexBlockPair<BlockType>(
-        index, layer_ptr->getBlockAtIndex(index).get()));
-  }
-
-  // CPU -> GPU
-  scratch_block_vector_device_.copyFromAsync(host_block_vector, cuda_stream);
+  // Copy blocks from cache to device and insert them
+  blocks_to_insert_device_.copyFromAsync(insertion_cache_, cuda_stream);
+  CHECK(static_cast<size_t>(gpu_hash_ptr_->impl_.max_size()) >=
+        gpu_hash_ptr_->impl_.size() + blocks_to_insert_device_.size());
+  gpu_hash_ptr_->impl_.insert(
+      thrust::device.on(cuda_stream),
+      stdgpu::make_device(blocks_to_insert_device_.data()),
+      stdgpu::make_device(blocks_to_insert_device_.data() +
+                          blocks_to_insert_device_.size()));
+  insertion_cache_.clear();
   cuda_stream.synchronize();
 
-  gpu_hash_ptr_->impl_.insert(
-      stdgpu::make_device(scratch_block_vector_device_.data()),
-      stdgpu::make_device(scratch_block_vector_device_.data() +
-                          scratch_block_vector_device_.size()));
+  // This check fails if duplicated entries are inserted into the hash. The hash
+  // would then contain less elements than the size variable.
+  CHECK_EQ(size_including_cache_,
+           static_cast<size_t>(gpu_hash_ptr_->impl_.size()));
 
-  // TODO(dtingdahl) Use newer version of stdgpu that support cuda streams to
-  // avoid device sync
-  checkCudaErrors(cudaDeviceSynchronize());
-  checkCudaErrors(cudaPeekAtLastError());
+}  // namespace nvblox
+
+template <typename BlockType>
+void GPULayerView<BlockType>::removeBlocksAsync(
+    const std::vector<Index3D>& blocks_to_remove,
+    const CudaStream& cuda_stream) {
+  flushInsertionCache(cuda_stream);
+  removal_cache_.reserve(removal_cache_.size() + blocks_to_remove.size());
+  for (const auto& item : blocks_to_remove) {
+    removal_cache_.push_back(item);
+  }
+  size_including_cache_ -= blocks_to_remove.size();
+}
+template <typename BlockType>
+void GPULayerView<BlockType>::removeBlockAsync(const Index3D& block_to_remove,
+                                               const CudaStream& cuda_stream) {
+  flushInsertionCache(cuda_stream);
+  removal_cache_.push_back(block_to_remove);
+  --size_including_cache_;
 }
 
 template <typename BlockType>
-void GPULayerView<BlockType>::reset(size_t new_max_num_blocks) {
-  timing::Timer timer("gpu_hash/transfer/reallocation");
-  gpu_hash_ptr_ = std::make_shared<GPUHashImpl<BlockType>>(new_max_num_blocks);
+void GPULayerView<BlockType>::flushRemovalCache(const CudaStream& cuda_stream) {
+  if (removal_cache_.empty()) {
+    return;
+  }
+
+  timing::Timer timer("gpu_hash/flush_removal_cache");
+
+  CHECK_EQ(size_including_cache_,
+           gpu_hash_ptr_->impl_.size() - removal_cache_.size());
+  CHECK_NOTNULL(gpu_hash_ptr_);
+
+  // Copy removal cache to GPU and erase them
+  blocks_to_remove_device_.copyFromAsync(removal_cache_, cuda_stream);
+  gpu_hash_ptr_->impl_.erase(
+      thrust::device.on(cuda_stream),
+      stdgpu::make_device(blocks_to_remove_device_.data()),
+      stdgpu::make_device(blocks_to_remove_device_.data() +
+                          blocks_to_remove_device_.size()));
+  removal_cache_.clear();
+  cuda_stream.synchronize();
+}
+
+template <typename BlockType>
+void GPULayerView<BlockType>::reset(size_t new_max_num_blocks,
+                                    const CudaStream& cuda_stream) {
+  timing::Timer timer("gpu_hash/transfer/reset");
+
+  gpu_hash_ptr_ =
+      std::make_shared<GPUHashImpl<BlockType>>(new_max_num_blocks, cuda_stream);
+  gpu_hash_ptr_->impl_.clear();
+  insertion_cache_.clear();
+  removal_cache_.clear();
+  size_including_cache_ = 0;
 }
 
 template <typename BlockType>
 size_t GPULayerView<BlockType>::size() const {
-  return gpu_hash_ptr_->size();
+  return size_including_cache_;
+}
+
+template <typename BlockType>
+size_t GPULayerView<BlockType>::capacity() const {
+  return gpu_hash_ptr_->max_num_blocks_;
+}
+
+template <typename BlockType>
+bool GPULayerView<BlockType>::isValid(const CudaStream& cuda_stream) const {
+  return gpu_hash_ptr_->impl_.valid(thrust::device.on(cuda_stream));
 }
 
 }  // namespace nvblox

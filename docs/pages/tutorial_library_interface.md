@@ -56,7 +56,7 @@ Getting voxels using the functions above is a multistep process internally.
 The function has to:
 * Call a kernel which translates query positions to voxel memory locations, 
 * Copies voxels into an output vector.
-* We the optionally have to copy the output vector from device to host memory.
+* We optionally have to copy the output vector from device to host memory.
  
 Therefore, advanced users who want maximum query speed should access voxels directly inside a GPU kernel.
 The next sections discusses this process.
@@ -102,7 +102,7 @@ void getVoxelsGPU(
   constexpr int kNumThreads = 512;
   const int num_blocks = num_queries / kNumThreads + 1;
 
-  GPULayerView<TsdfBlock> gpu_layer_view = layer.getGpuLayerView();
+  GPULayerView<TsdfBlock> gpu_layer_view = layer.getGpuLayerView(CudaStreamOwning());
 
   queryVoxelsKernel<<<num_blocks, kNumThreads>>>(
       num_queries, gpu_layer_view.getHash().impl_, layer.block_size(),
@@ -115,7 +115,7 @@ void getVoxelsGPU(
 The first critical thing that happens in the code above is that we get a GPU view of the hash table representing the map.
 
 ```cpp
-GPULayerView<TsdfBlock> gpu_layer_view = layer.getGpuLayerView()
+GPULayerView<TsdfBlock> gpu_layer_view = layer.getGpuLayerView(CudaStreamOwning())
 ```
 The hash table is used in the kernel to transform 3D query locations into memory locations for voxels.
 
